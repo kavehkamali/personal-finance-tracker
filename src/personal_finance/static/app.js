@@ -50,6 +50,39 @@ const state = {
   },
 };
 
+const EXCLUDE_STORAGE_KEY = "pf-exclude-v1";
+
+function defaultExcludeState() {
+  return { categories: [], necessities: [], beneficiaries: [] };
+}
+
+function loadExcludeState() {
+  try {
+    const raw = localStorage.getItem(EXCLUDE_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        categories: Array.isArray(parsed.categories) ? parsed.categories : [],
+        necessities: Array.isArray(parsed.necessities) ? parsed.necessities : [],
+        beneficiaries: Array.isArray(parsed.beneficiaries) ? parsed.beneficiaries : [],
+      };
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  return defaultExcludeState();
+}
+
+function saveExcludeState(payload) {
+  try {
+    localStorage.setItem(EXCLUDE_STORAGE_KEY, JSON.stringify(payload));
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+let excludeState = loadExcludeState();
+
 function normalizeSummary(raw) {
   if (!raw || typeof raw !== "object") return null;
   const arr = (v) => (Array.isArray(v) ? v : []);
@@ -90,17 +123,150 @@ function normalizeSummary(raw) {
     matched_transfers: arr(raw.matched_transfers),
     unmatched_internal: arr(raw.unmatched_internal),
     recent_transactions: arr(raw.recent_transactions),
+    filter_dimensions:
+      raw.filter_dimensions && typeof raw.filter_dimensions === "object"
+        ? {
+            categories: arr(raw.filter_dimensions.categories),
+            necessities: arr(raw.filter_dimensions.necessities),
+            beneficiaries: arr(raw.filter_dimensions.beneficiaries),
+          }
+        : { categories: [], necessities: [], beneficiaries: [] },
+    internal_review:
+      raw.internal_review && typeof raw.internal_review === "object"
+        ? {
+            stats: raw.internal_review.stats && typeof raw.internal_review.stats === "object" ? raw.internal_review.stats : {},
+            caption: String(raw.internal_review.caption || ""),
+            matched_transfers: arr(raw.internal_review.matched_transfers),
+            unmatched_internal: arr(raw.internal_review.unmatched_internal),
+            other_uncategorized: arr(raw.internal_review.other_uncategorized),
+          }
+        : {
+            stats: {},
+            caption: "",
+            matched_transfers: [],
+            unmatched_internal: [],
+            other_uncategorized: [],
+          },
+    taxonomy:
+      raw.taxonomy && typeof raw.taxonomy === "object"
+        ? {
+            categories: arr(raw.taxonomy.categories),
+            necessities: arr(raw.taxonomy.necessities),
+            beneficiaries: arr(raw.taxonomy.beneficiaries),
+          }
+        : { categories: [], necessities: [], beneficiaries: [] },
+    category_review: arr(raw.category_review),
   };
 }
 
-function setStatus(message) {
-  document.getElementById("status-banner").textContent = message;
+const ICON_UPLOAD = `<svg class="upload-ic" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>`;
+const ICON_CHECK = `<svg class="upload-ic upload-ic--ok" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`;
+
+let activityHintTimer = null;
+
+function showErrorBanner(message) {
+  const el = document.getElementById("status-banner");
+  if (!el) return;
+  el.hidden = false;
+  el.textContent = message;
 }
 
-function setProgress(progress, label, detail) {
-  document.getElementById("progress-fill").style.width = `${Math.max(0, Math.min(100, progress * 100))}%`;
-  document.getElementById("progress-label").textContent = label;
-  document.getElementById("progress-meta").textContent = detail;
+function hideErrorBanner() {
+  const el = document.getElementById("status-banner");
+  if (!el) return;
+  el.hidden = true;
+  el.textContent = "";
+}
+
+function showActivityHint(message, extraClass = "", durationMs = 4000) {
+  const el = document.getElementById("activity-hint");
+  if (!el || !message) return;
+  if (activityHintTimer) clearTimeout(activityHintTimer);
+  el.hidden = false;
+  el.textContent = message;
+  el.className = `activity-hint${extraClass ? ` ${extraClass}` : ""}`;
+  activityHintTimer = setTimeout(() => {
+    el.hidden = true;
+    el.textContent = "";
+    activityHintTimer = null;
+  }, durationMs);
+}
+
+function hideActivityHint() {
+  if (activityHintTimer) clearTimeout(activityHintTimer);
+  activityHintTimer = null;
+  const el = document.getElementById("activity-hint");
+  if (el) {
+    el.hidden = true;
+    el.textContent = "";
+  }
+}
+
+function setProgressVisual(visible, progress, text, pctText) {
+  const wrap = document.getElementById("upload-progress-wrap");
+  const fill = document.getElementById("progress-fill");
+  const label = document.getElementById("upload-progress-text");
+  const pct = document.getElementById("upload-progress-pct");
+  if (!wrap || !fill) return;
+  wrap.hidden = !visible;
+  const w = visible ? Math.max(0, Math.min(100, (progress || 0) * 100)) : 0;
+  fill.style.width = `${w}%`;
+  if (label && text != null) label.textContent = text;
+  if (pct) pct.textContent = visible && pctText != null && pctText !== "" ? pctText : "";
+}
+
+function resetUploadProgress() {
+  setProgressVisual(false, 0, "Processing…", "");
+}
+
+function renderUploadQueued(fileCount) {
+  const fb = document.getElementById("upload-feedback");
+  if (!fb) return;
+  fb.hidden = false;
+  fb.innerHTML = `
+    <div class="upload-feedback-inner upload-feedback--queued">
+      <span class="upload-ic-wrap">${ICON_UPLOAD}</span>
+      <div>
+        <div class="upload-report-head" style="margin-bottom:2px">
+          <strong>${fileCount} file${fileCount === 1 ? "" : "s"} received</strong>
+        </div>
+        <p class="upload-feedback-sub">Saving and parsing…</p>
+      </div>
+    </div>
+  `;
+}
+
+function renderUploadComplete(fileCount, summary) {
+  const fb = document.getElementById("upload-feedback");
+  if (!fb) return;
+  const ov = summary.overview || {};
+  const meta = summary.meta || {};
+  const warnings = Array.isArray(meta.warnings) ? meta.warnings : [];
+  const warnBlock =
+    warnings.length > 0
+      ? `<div class="upload-report-warn" role="status"><strong>Heads up:</strong> ${warnings.map((w) => escapeHtml(w)).join(" · ")}</div>`
+      : "";
+  fb.hidden = false;
+  fb.innerHTML = `
+    <div class="upload-feedback-inner upload-feedback--done">
+      ${ICON_CHECK}
+      <div style="flex:1;min-width:0">
+        <div class="upload-report-head">
+          <strong>Import complete</strong>
+        </div>
+        <p class="upload-feedback-sub">${fileCount} file${fileCount === 1 ? "" : "s"} merged into the dataset</p>
+        <div class="upload-report-stats">
+          <div class="upload-stat"><span class="upload-stat-val">${Number(ov.transaction_count ?? 0).toLocaleString()}</span><span class="upload-stat-lbl">Transactions</span></div>
+          <div class="upload-stat"><span class="upload-stat-val">${Number(ov.statement_count ?? 0).toLocaleString()}</span><span class="upload-stat-lbl">Statements</span></div>
+          <div class="upload-stat"><span class="upload-stat-val">${Number(ov.account_count ?? 0).toLocaleString()}</span><span class="upload-stat-lbl">Accounts</span></div>
+          <div class="upload-stat"><span class="upload-stat-val">${Number(ov.owner_count ?? 0).toLocaleString()}</span><span class="upload-stat-lbl">Owners</span></div>
+          <div class="upload-stat"><span class="upload-stat-val">${formatCurrency(ov.expense_total)}</span><span class="upload-stat-lbl">Spend (filtered)</span></div>
+          <div class="upload-stat"><span class="upload-stat-val" style="font-size:0.875rem">${escapeHtml(ov.date_start || "—")} → ${escapeHtml(ov.date_end || "—")}</span><span class="upload-stat-lbl">Date range</span></div>
+        </div>
+        ${warnBlock}
+      </div>
+    </div>
+  `;
 }
 
 function formatCurrency(value) {
@@ -147,6 +313,10 @@ function currentQueryParams() {
     params.set("include_internal", "true");
   }
 
+  excludeState.categories.forEach((c) => params.append("exclude_category", c));
+  excludeState.necessities.forEach((n) => params.append("exclude_necessity", n));
+  excludeState.beneficiaries.forEach((b) => params.append("exclude_beneficiary", b));
+
   return params;
 }
 
@@ -165,6 +335,119 @@ function populateFilters(summary) {
     const currentValue = select.value;
     select.innerHTML = [`<option value="">${label}</option>`, ...summary.filters[key].map((item) => optionMarkup(item, currentValue))].join("");
   });
+  renderExcludeLists(summary);
+}
+
+function renderExcludeLists(summary) {
+  const fd = summary.filter_dimensions || { categories: [], necessities: [], beneficiaries: [] };
+  const cats = fd.categories.length ? fd.categories : summary.filters.categories;
+  const nec = fd.necessities.length ? fd.necessities : summary.filters.necessities;
+  const ben = fd.beneficiaries.length ? fd.beneficiaries : summary.filters.beneficiaries;
+
+  const renderCheckList = (containerId, items, key) => {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    const selected = new Set(excludeState[key] || []);
+    el.innerHTML = items
+      .filter(Boolean)
+      .map(
+        (item) => `
+      <label class="exclude-row">
+        <input type="checkbox" data-exclude-group="${key}" value="${escapeHtml(item)}" ${selected.has(item) ? "checked" : ""} />
+        <span class="exclude-row-label">${escapeHtml(item)}</span>
+      </label>
+    `,
+      )
+      .join("");
+    if (!items.length) {
+      el.innerHTML = `<div class="empty-state exclude-empty">Nothing to list yet.</div>`;
+    }
+  };
+
+  renderCheckList("exclude-categories-list", cats, "categories");
+  renderCheckList("exclude-necessities-list", nec, "necessities");
+  renderCheckList("exclude-beneficiaries-list", ben, "beneficiaries");
+}
+
+function refreshExcludeStateFromDom() {
+  excludeState = {
+    categories: [...document.querySelectorAll('#exclude-categories-list input[type="checkbox"]:checked')].map((i) => i.value),
+    necessities: [...document.querySelectorAll('#exclude-necessities-list input[type="checkbox"]:checked')].map((i) => i.value),
+    beneficiaries: [...document.querySelectorAll('#exclude-beneficiaries-list input[type="checkbox"]:checked')].map((i) => i.value),
+  };
+  saveExcludeState(excludeState);
+}
+
+function renderInternalReview(summary) {
+  const ir = summary.internal_review || {};
+  const cap = document.getElementById("internal-review-caption");
+  if (cap) cap.textContent = ir.caption || "";
+
+  const st = ir.stats || {};
+  const statsEl = document.getElementById("internal-review-stats");
+  if (statsEl) {
+    const cells = [
+      ["Paired rows", st.rows_paired],
+      ["Keyword internal", st.rows_keyword],
+      ["Unmatched candidates", st.rows_unmatched_candidate],
+      ["Transfer pair groups", st.pair_count],
+      ["Heuristic pairs (amount + timing)", st.pairs_amount_timing],
+    ];
+    statsEl.innerHTML = `<div class="ir-stat-grid">${cells
+      .map(
+        ([k, v]) =>
+          `<div class="ir-stat"><span class="ir-stat-k">${escapeHtml(k)}</span><span class="ir-stat-v">${Number(v ?? 0).toLocaleString()}</span></div>`,
+      )
+      .join("")}</div>`;
+  }
+
+  renderTable(
+    "internal-review-matched",
+    ir.matched_transfers || [],
+    ["Amount", "Leg A", "Leg B", "When", "Rule / tag"],
+    (row) => `
+      <tr>
+        <td><span class="pill">${formatCurrency(row.amount)}</span></td>
+        <td><strong>${escapeHtml(row.account_left)}</strong><br /><span class="ir-desc">${escapeHtml(row.description_left)}</span></td>
+        <td><strong>${escapeHtml(row.account_right)}</strong><br /><span class="ir-desc">${escapeHtml(row.description_right)}</span></td>
+        <td class="ir-dates">${escapeHtml(row.date_left || "—")}<br />${escapeHtml(row.date_right || "—")}</td>
+        <td class="ir-tags"><span class="ir-tag">${escapeHtml(row.tag_left || "—")}</span><br /><span class="ir-tag">${escapeHtml(row.tag_right || "—")}</span></td>
+      </tr>
+    `,
+    "data-table-wrap internal-review-tbl",
+  );
+
+  renderTable(
+    "internal-review-unmatched",
+    ir.unmatched_internal || [],
+    ["Date", "Owner", "Account", "Description", "Cash flow"],
+    (row) => `
+      <tr>
+        <td>${escapeHtml(row.transaction_date || "—")}</td>
+        <td>${escapeHtml(row.owner)}</td>
+        <td>${escapeHtml(row.account_label)}</td>
+        <td>${escapeHtml(row.description)}</td>
+        <td>${formatCurrency(row.value)}</td>
+      </tr>
+    `,
+    "data-table-wrap internal-review-tbl",
+  );
+
+  renderTable(
+    "internal-review-other",
+    ir.other_uncategorized || [],
+    ["Date", "Account", "Merchant", "Description", "Amount"],
+    (row) => `
+      <tr>
+        <td>${escapeHtml(row.transaction_date || "—")}</td>
+        <td>${escapeHtml(row.account_label)}</td>
+        <td>${escapeHtml(row.merchant)}</td>
+        <td>${escapeHtml(row.description)}</td>
+        <td>${formatCurrency(row.amount)}</td>
+      </tr>
+    `,
+    "data-table-wrap internal-review-tbl",
+  );
 }
 
 function sparklineSvg(values, w = 128, h = 40) {
@@ -793,6 +1076,175 @@ function renderCharts(summary) {
   scheduleDashChartResize();
 }
 
+function taxonomySelectOptions(values, selected) {
+  return values
+    .map((v) => `<option value="${escapeHtml(v)}"${v === selected ? " selected" : ""}>${escapeHtml(v)}</option>`)
+    .join("");
+}
+
+function categoryReviewBadgeLabel(source) {
+  const s = String(source || "auto");
+  const labels = {
+    auto: "Auto — no keyword",
+    rule: "Keyword rule",
+    override: "Your correction",
+    internal_pair: "Internal (paired)",
+    internal_keyword: "Internal (text)",
+  };
+  return labels[s] || s;
+}
+
+function suggestRuleKeyword(description) {
+  const t = String(description || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!t) return "";
+  return t.length > 48 ? t.slice(0, 48) : t;
+}
+
+function renderCategoryReviewPanel(summary) {
+  const list = document.getElementById("category-review-list");
+  const toolbar = document.getElementById("category-review-toolbar");
+  if (!list) return;
+  const rows = summary.category_review || [];
+  const tax = summary.taxonomy || { categories: [], necessities: [], beneficiaries: [] };
+  const cats = tax.categories.length ? tax.categories : [];
+  const necs = tax.necessities.length ? tax.necessities : [];
+  const bens = tax.beneficiaries.length ? tax.beneficiaries : [];
+
+  if (toolbar) {
+    toolbar.removeAttribute("aria-hidden");
+    toolbar.innerHTML =
+      rows.length === 0
+        ? `<p class="cat-review-toolbar-text">No rows in the review queue for this scope.</p>`
+        : `<p class="cat-review-toolbar-text"><strong>${rows.length}</strong> transaction${rows.length === 1 ? "" : "s"} in the queue for the current filters.</p>`;
+  }
+
+  if (!rows.length) {
+    list.innerHTML = `
+      <div class="cat-review-empty">
+        <p class="cat-review-empty-title">Queue is clear</p>
+        <p class="cat-review-empty-sub">Try another month or owner, or clear sidebar exclusions. Rows land here when they are <strong>Other</strong>, carry an <strong>unknown merchant</strong>, or are <strong>expenses with no keyword rule</strong>.</p>
+      </div>`;
+    return;
+  }
+
+  const badgeModifiers = new Set(["auto", "rule", "override", "internal_pair", "internal_keyword"]);
+
+  list.innerHTML = rows
+    .map((row) => {
+      const tx = escapeHtml(row.tx_key || "");
+      const src = String(row.category_source || "auto");
+      const badgeMod = badgeModifiers.has(src) ? src : "misc";
+      const sug = suggestRuleKeyword(row.description);
+      return `
+    <div class="cat-review-row" data-tx-key="${tx}">
+      <div class="cat-review-row-top">
+        <span class="cat-review-badge cat-review-badge--${badgeMod}" title="Source">${escapeHtml(categoryReviewBadgeLabel(src))}</span>
+        <span class="cat-review-date">${escapeHtml(row.transaction_date || "—")}</span>
+        <span class="cat-review-amt">${formatCurrency(row.expense_amount || 0)}</span>
+      </div>
+      <div class="cat-review-desc">
+        <span class="cat-review-merchant">${escapeHtml(row.merchant || "—")}</span>
+        <span class="cat-review-desc-text">${escapeHtml(row.description || "")}</span>
+      </div>
+      <div class="cat-review-meta">${escapeHtml(row.account_label || "")} · ${escapeHtml(row.owner || "")}</div>
+      <div class="cat-review-controls">
+        <label class="cat-review-field">
+          <span>Category</span>
+          <select class="cat-review-select" data-field="category">${taxonomySelectOptions(cats, row.category)}</select>
+        </label>
+        <label class="cat-review-field">
+          <span>Need level</span>
+          <select class="cat-review-select" data-field="necessity">${taxonomySelectOptions(necs, row.necessity)}</select>
+        </label>
+        <label class="cat-review-field">
+          <span>Beneficiary</span>
+          <select class="cat-review-select" data-field="beneficiary">${taxonomySelectOptions(bens, row.beneficiary)}</select>
+        </label>
+      </div>
+      <div class="cat-review-rule">
+        <label class="cat-review-rule-label">
+          <input type="checkbox" data-field="add_rule" />
+          <span>Save keyword rule for similar lines</span>
+        </label>
+        <input type="text" class="cat-review-keyword-input" data-field="add_rule_keyword" value="${escapeHtml(sug)}" placeholder="Keyword from description…" autocomplete="off" />
+      </div>
+    </div>`;
+    })
+    .join("");
+}
+
+async function saveCategoryReview() {
+  const dirty = document.querySelectorAll(".cat-review-row--dirty");
+  if (!dirty.length) {
+    showActivityHint("Change a category or keyword field, then save.");
+    return;
+  }
+  hideErrorBanner();
+  const items = [];
+  dirty.forEach((row) => {
+    const tx_key = row.getAttribute("data-tx-key");
+    if (!tx_key) return;
+    const cat = row.querySelector('[data-field="category"]')?.value;
+    const nec = row.querySelector('[data-field="necessity"]')?.value;
+    const ben = row.querySelector('[data-field="beneficiary"]')?.value;
+    const addRule = row.querySelector('[data-field="add_rule"]')?.checked;
+    const kw = row.querySelector('[data-field="add_rule_keyword"]')?.value?.trim() || "";
+    items.push({
+      tx_key,
+      category: cat,
+      necessity: nec,
+      beneficiary: ben,
+      add_rule: !!(addRule && kw.length >= 2),
+      add_rule_keyword: kw,
+    });
+  });
+  const response = await fetch("/api/transaction-corrections", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+  });
+  if (!response.ok) throw new Error("Could not save categorization.");
+  const payload = await response.json();
+  const normalized = normalizeSummary(payload.summary);
+  if (!normalized) {
+    showErrorBanner("Server returned an invalid summary.");
+    return;
+  }
+  state.summary = normalized;
+  populateFilters(normalized);
+  renderOverview(normalized);
+  renderCharts(normalized);
+  renderTables(normalized);
+  renderRulesTable();
+  showActivityHint(
+    payload.rules_inserted
+      ? `Saved — ${payload.rules_inserted} new keyword rule(s) and corrections applied.`
+      : "Corrections saved — dataset rebuilt.",
+    "activity-hint--ok",
+  );
+}
+
+function bindCategoryReview() {
+  const list = document.getElementById("category-review-list");
+  if (list) {
+    list.addEventListener("change", (e) => {
+      const row = e.target.closest(".cat-review-row");
+      if (row) row.classList.add("cat-review-row--dirty");
+    });
+    list.addEventListener("input", (e) => {
+      if (e.target && e.target.matches && e.target.matches('[data-field="add_rule_keyword"]')) {
+        e.target.closest(".cat-review-row")?.classList.add("cat-review-row--dirty");
+      }
+    });
+  }
+  document.getElementById("category-review-save")?.addEventListener("click", () => {
+    saveCategoryReview().catch((error) => showErrorBanner(error.message));
+  });
+}
+
 function renderTable(containerId, rows, headers, rowMapper, className = "") {
   const container = document.getElementById(containerId);
   if (!rows.length) {
@@ -809,13 +1261,14 @@ function renderTables(summary) {
   renderTable(
     "matched-transfers",
     summary.matched_transfers,
-    ["Amount", "Left Side", "Right Side", "Dates"],
+    ["Amount", "Left Side", "Right Side", "Dates", "Tag"],
     (row) => `
       <tr>
         <td><span class="pill">${formatCurrency(row.amount)}</span></td>
         <td><strong>${escapeHtml(row.account_left)}</strong><br />${escapeHtml(row.description_left)}</td>
         <td><strong>${escapeHtml(row.account_right)}</strong><br />${escapeHtml(row.description_right)}</td>
         <td>${escapeHtml(row.date_left || "—")}<br />${escapeHtml(row.date_right || "—")}</td>
+        <td class="ir-tags"><span class="ir-tag">${escapeHtml(row.tag_left || "—")}</span><br /><span class="ir-tag">${escapeHtml(row.tag_right || "—")}</span></td>
       </tr>
     `,
   );
@@ -853,6 +1306,9 @@ function renderTables(summary) {
     `,
     "data-table-wrap",
   );
+
+  renderInternalReview(summary);
+  renderCategoryReviewPanel(summary);
 }
 
 function rulesFilterSelectOptions(options, selectedVal, emptyLabel) {
@@ -1078,7 +1534,7 @@ async function loadRules() {
 }
 
 async function saveRules() {
-  setStatus("Saving category rules and rebuilding dataset…");
+  hideErrorBanner();
   const response = await fetch("/api/category-rules", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1098,7 +1554,7 @@ async function saveRules() {
   };
   const normalized = normalizeSummary(payload.summary);
   if (!normalized) {
-    setStatus("Server returned an invalid summary.");
+    showErrorBanner("Server returned an invalid summary.");
     return;
   }
   state.summary = normalized;
@@ -1107,7 +1563,7 @@ async function saveRules() {
   renderCharts(normalized);
   renderTables(normalized);
   renderRulesTable();
-  setStatus("Category rules saved.");
+  showActivityHint("Rules saved — dataset rebuilt.", "activity-hint--ok");
 }
 
 async function fetchSummary() {
@@ -1119,7 +1575,8 @@ async function fetchSummary() {
 }
 
 async function loadDashboard() {
-  setStatus("Refreshing dashboard…");
+  hideErrorBanner();
+  hideActivityHint();
   const summary = await fetchSummary();
   const normalized = normalizeSummary(summary);
   state.summary = normalized;
@@ -1127,8 +1584,6 @@ async function loadDashboard() {
   renderOverview(normalized);
   renderCharts(normalized);
   renderTables(normalized);
-  const warnings = normalized.meta?.warnings || [];
-  setStatus(warnings.length ? `Warnings: ${warnings.join(" | ")}` : "Data loaded successfully.");
 }
 
 async function pollJob(jobId) {
@@ -1138,24 +1593,25 @@ async function pollJob(jobId) {
   }
 
   const job = await response.json();
-  const detail = job.total_files ? `${Math.round(job.progress * 100)}% · ${job.processed_files}/${job.total_files} files` : `${Math.round(job.progress * 100)}%`;
-  setProgress(job.progress || 0, job.message || job.stage || "Processing", detail);
-  setStatus(job.current_file ? `${job.message} — ${job.current_file}` : job.message);
+  const pct = `${Math.round((job.progress || 0) * 100)}%`;
+  setProgressVisual(true, job.progress || 0, "Processing statements…", pct);
 
   if (job.status === "complete") {
     clearInterval(state.pollHandle);
     state.pollHandle = null;
     state.currentJobId = null;
     const savedFiles = job.result && Array.isArray(job.result.saved_files) ? job.result.saved_files : [];
-    setProgress(1, job.message || "Finished", "100%");
+    const n = savedFiles.length;
+    resetUploadProgress();
     try {
       await loadDashboard();
       await loadRules();
-      let msg = "Processing complete.";
-      if (savedFiles.length) msg += ` Imported: ${savedFiles.join(", ")}.`;
-      setStatus(msg);
+      if (state.summary && n > 0) {
+        renderUploadComplete(n, state.summary);
+      }
+      hideErrorBanner();
     } catch (err) {
-      setStatus(err.message || "Could not refresh dashboard after upload.");
+      showErrorBanner(err.message || "Could not refresh dashboard after upload.");
     }
     return;
   }
@@ -1164,7 +1620,8 @@ async function pollJob(jobId) {
     clearInterval(state.pollHandle);
     state.pollHandle = null;
     state.currentJobId = null;
-    setStatus(job.error || "Processing failed.");
+    resetUploadProgress();
+    showErrorBanner(job.error || "Processing failed.");
     return;
   }
 }
@@ -1173,15 +1630,17 @@ function startPolling(jobId) {
   if (state.pollHandle) clearInterval(state.pollHandle);
   state.currentJobId = jobId;
   state.pollHandle = setInterval(() => {
-    pollJob(jobId).catch((error) => setStatus(error.message));
+    pollJob(jobId).catch((error) => showErrorBanner(error.message));
   }, 800);
-  pollJob(jobId).catch((error) => setStatus(error.message));
+  pollJob(jobId).catch((error) => showErrorBanner(error.message));
 }
 
 async function uploadFiles(files) {
   if (!files.length) return;
-  setStatus(`Uploading ${files.length} file(s)…`);
-  setProgress(0.03, "Saving uploaded files", "0%");
+  hideErrorBanner();
+  hideActivityHint();
+  renderUploadQueued(files.length);
+  setProgressVisual(true, 0.06, "Uploading…", "");
   const formData = new FormData();
   [...files].forEach((file) => formData.append("files", file));
 
@@ -1191,6 +1650,7 @@ async function uploadFiles(files) {
   });
 
   if (!response.ok) {
+    resetUploadProgress();
     throw new Error("Upload failed.");
   }
 
@@ -1208,7 +1668,8 @@ function bindUploader() {
     try {
       await uploadFiles(event.target.files);
     } catch (error) {
-      setStatus(error.message);
+      resetUploadProgress();
+      showErrorBanner(error.message);
     } finally {
       fileInput.value = "";
     }
@@ -1232,7 +1693,8 @@ function bindUploader() {
     try {
       await uploadFiles(event.dataTransfer.files);
     } catch (error) {
-      setStatus(error.message);
+      resetUploadProgress();
+      showErrorBanner(error.message);
     }
   });
 }
@@ -1242,29 +1704,40 @@ function bindFilters() {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener("change", () => {
-      loadDashboard().catch((error) => setStatus(error.message));
+      loadDashboard().catch((error) => showErrorBanner(error.message));
     });
   });
+
+  const sidebarBody = document.getElementById("dash-sidebar-body");
+  if (sidebarBody) {
+    sidebarBody.addEventListener("change", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      if (!target.matches('input[data-exclude-group][type="checkbox"]')) return;
+      refreshExcludeStateFromDom();
+      loadDashboard().catch((error) => showErrorBanner(error.message));
+    });
+  }
 }
 
 function bindDashboardExtras() {
   document.getElementById("reload-dashboard-btn")?.addEventListener("click", async () => {
-    setStatus("Rebuilding dataset from statements…");
+    hideErrorBanner();
     try {
       const res = await fetch("/api/reload", { method: "POST" });
       if (!res.ok) throw new Error("Reload failed");
       await loadDashboard();
       await loadRules();
-      setStatus("Dataset rebuilt. Your filters were re-applied.");
+      showActivityHint("Dataset rebuilt from your statement files.", "activity-hint--ok");
     } catch (err) {
-      setStatus(err.message || "Reload failed");
+      showErrorBanner(err.message || "Reload failed");
     }
   });
 
   document.getElementById("export-recent-csv")?.addEventListener("click", () => {
     const rows = state.summary?.recent_transactions;
     if (!rows?.length) {
-      setStatus("No transactions to export.");
+      showActivityHint("Nothing to export in the current view.");
       return;
     }
     const cols = [
@@ -1280,7 +1753,9 @@ function bindDashboardExtras() {
       "amount",
       "expense_amount",
       "internal_match_status",
-    ];
+      "tx_key",
+      "category_source",
+    ].filter((c) => rows[0] && Object.prototype.hasOwnProperty.call(rows[0], c));
     const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const lines = [cols.join(",")].concat(rows.map((row) => cols.map((c) => esc(row[c])).join(",")));
     const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
@@ -1289,7 +1764,7 @@ function bindDashboardExtras() {
     a.download = `recent-activity-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
-    setStatus("Exported recent activity CSV.");
+    showActivityHint("CSV downloaded.", "activity-hint--ok", 3200);
   });
 }
 
@@ -1306,7 +1781,7 @@ function bindRuleActions() {
   });
 
   document.getElementById("save-rules-button").addEventListener("click", () => {
-    saveRules().catch((error) => setStatus(error.message));
+    saveRules().catch((error) => showErrorBanner(error.message));
   });
 }
 
@@ -1314,6 +1789,7 @@ const DASH_STORAGE_KEY = "pf-dash-layout-v1";
 
 const DASH_PANEL_DEFS = [
   { id: "panel-overview", label: "Overview metrics" },
+  { id: "panel-category-review", label: "Fix categories (review queue)" },
   { id: "chart-monthly", label: "Spending over time" },
   { id: "chart-category-donut", label: "Category mix (donut)" },
   { id: "chart-necessity", label: "Spending by need" },
@@ -1341,9 +1817,10 @@ const DASH_PANEL_DEFS = [
 
 const DASH_PRESETS = {
   full: null,
-  minimal: new Set(["panel-overview", "chart-monthly", "chart-category-donut", "chart-category", "table-recent"]),
+  minimal: new Set(["panel-overview", "panel-category-review", "chart-monthly", "chart-category-donut", "chart-category", "table-recent"]),
   household: new Set([
     "panel-overview",
+    "panel-category-review",
     "chart-necessity",
     "chart-beneficiary",
     "chart-necessity-monthly",
@@ -1351,9 +1828,10 @@ const DASH_PRESETS = {
     "chart-owner-beneficiary",
     "table-recent",
   ]),
-  reconcile: new Set(["panel-overview", "table-matched", "table-unmatched", "table-recent"]),
+  reconcile: new Set(["panel-overview", "panel-category-review", "table-matched", "table-unmatched", "table-recent"]),
   trends: new Set([
     "panel-overview",
+    "panel-category-review",
     "chart-monthly",
     "chart-category-donut",
     "chart-stacked",
@@ -1524,13 +2002,14 @@ window.addEventListener("DOMContentLoaded", async () => {
   bindDashLayout();
   bindUploader();
   bindFilters();
+  bindCategoryReview();
   bindDashboardExtras();
   bindRuleActions();
-  setProgress(0, "Idle", "0%");
+  resetUploadProgress();
   try {
     await Promise.all([loadDashboard(), loadRules()]);
     scheduleDashChartResize();
   } catch (error) {
-    setStatus(error.message);
+    showErrorBanner(error.message);
   }
 });

@@ -131,18 +131,60 @@ DEFAULT_CATEGORY_RULES = [
     {"keyword": "envoy business", "category": "Business", "necessity": "Business", "beneficiary": "Kaveh"},
     {"keyword": "service fee", "category": "Fees", "necessity": "Fixed Bills", "beneficiary": AUTO_VALUE},
     {"keyword": "annual fee", "category": "Fees", "necessity": "Fixed Bills", "beneficiary": AUTO_VALUE},
+    {"keyword": "walmart", "category": "Groceries", "necessity": "Essential", "beneficiary": "Shared"},
+    {"keyword": "metro ", "category": "Groceries", "necessity": "Essential", "beneficiary": "Shared"},
+    {"keyword": "food basics", "category": "Groceries", "necessity": "Essential", "beneficiary": "Shared"},
+    {"keyword": "no frills", "category": "Groceries", "necessity": "Essential", "beneficiary": "Shared"},
+    {"keyword": "dollarama", "category": "Shopping", "necessity": "Discretionary", "beneficiary": AUTO_VALUE},
+    {"keyword": "lcbo", "category": "Dining & Coffee", "necessity": "Discretionary", "beneficiary": AUTO_VALUE},
+    {"keyword": "beer store", "category": "Dining & Coffee", "necessity": "Discretionary", "beneficiary": AUTO_VALUE},
+    {"keyword": "doordash", "category": "Dining & Coffee", "necessity": "Discretionary", "beneficiary": AUTO_VALUE},
+    {"keyword": "skip the dishes", "category": "Dining & Coffee", "necessity": "Discretionary", "beneficiary": AUTO_VALUE},
+    {"keyword": "uber eats", "category": "Dining & Coffee", "necessity": "Discretionary", "beneficiary": AUTO_VALUE},
+    {"keyword": "cineplex", "category": "Entertainment", "necessity": "Discretionary", "beneficiary": AUTO_VALUE},
+    {"keyword": "canadian tire", "category": "Home", "necessity": "Essential", "beneficiary": "Shared"},
+    {"keyword": "rexall", "category": "Health & Pharmacy", "necessity": "Essential", "beneficiary": "Shared"},
+    {"keyword": "pet valu", "category": "Home", "necessity": "Essential", "beneficiary": "Shared"},
+    {"keyword": "indigo", "category": "Shopping", "necessity": "Discretionary", "beneficiary": AUTO_VALUE},
+    {"keyword": "sport chek", "category": "Shopping", "necessity": "Discretionary", "beneficiary": AUTO_VALUE},
+    {"keyword": "mnp", "category": "Business", "necessity": "Business", "beneficiary": "Kaveh"},
 ]
 
+# Avoid bare "transfer" / "payment" — they appear in unrelated merchant text and misclassify spend.
 TRANSFER_KEYWORDS = (
     "payment - thank you",
     "paiement - merci",
+    "paiement - thank you",
     "credit card payment",
+    "cc payment",
+    "visa payment",
+    "mc payment",
     "bill payment",
+    "online banking payment",
+    "internet banking payment",
+    "mobile banking payment",
+    "pre-authorized payment",
+    "preauthorized payment",
     "paymentus",
     "e-transfer",
     "etransfer",
-    "transfer",
+    "interac e-transfer",
+    "interac e transfer",
+    "send e-transfer",
+    "receive e-transfer",
+    "e transfer",
+    "online transfer",
+    "funds transfer",
+    "bank transfer",
+    "account transfer",
+    "transfer to",
+    "transfer from",
+    "tfr ",
+    " tfr",
+    "wire transfer",
+    "investment transfer",
     "autopay",
+    "automatic payment",
 )
 
 REFUND_KEYWORDS = (
@@ -155,10 +197,14 @@ REFUND_KEYWORDS = (
 INCOME_KEYWORDS = (
     "payroll",
     "salary",
-    "deposit",
+    "direct deposit",
+    "pay dep",
+    "pay deposit",
     "cashback",
+    "cash back",
     "rebate",
     "interest paid",
+    "dividend",
 )
 
 FEE_KEYWORDS = (
@@ -240,8 +286,14 @@ def save_category_rules(rules: list[dict[str, str]]) -> list[dict[str, str]]:
 
 
 def _match_rule(text: str, rules: list[dict[str, str]]) -> dict[str, str] | None:
-    for rule in rules:
-        if rule["keyword"] in text:
+    # Longest keyword first so specific rules beat short tokens (e.g. "shoppers drug mart" before "hm").
+    sorted_rules = sorted(rules, key=lambda r: len(r["keyword"]), reverse=True)
+    for rule in sorted_rules:
+        kw = rule["keyword"]
+        if len(kw) <= 2:
+            if re.search(rf"(?<!\w){re.escape(kw)}(?!\w)", text):
+                return rule
+        elif kw in text:
             return rule
     return None
 
@@ -281,6 +333,13 @@ def _infer_beneficiary(owner: str, category: str) -> str:
     if "kaveh" in owner_lower:
         return "Kaveh"
     return "Shared"
+
+
+def resolve_rule_targets(owner: str, category: str, necessity: str, beneficiary: str) -> dict[str, str]:
+    """Resolve Auto necessity/beneficiary the same way as keyword rules."""
+    n = necessity if necessity in NECESSITY_OPTIONS and necessity != AUTO_VALUE else _infer_necessity_from_category(category)
+    b = beneficiary if beneficiary in BENEFICIARY_OPTIONS and beneficiary != AUTO_VALUE else _infer_beneficiary(owner, category)
+    return {"necessity": n, "beneficiary": b}
 
 
 def infer_flow_type(description: str, amount: float, statement_type: str) -> str:

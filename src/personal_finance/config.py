@@ -20,6 +20,7 @@ TRANSACTIONS_CSV = PROCESSED_DIR / "transactions.csv"
 PIPELINE_META_JSON = PROCESSED_DIR / "pipeline_meta.json"
 CATEGORY_RULES_JSON = SETTINGS_DIR / "category_rules.json"
 MERCHANT_ALIASES_JSON = SETTINGS_DIR / "merchant_aliases.json"
+TRANSACTION_OVERRIDES_JSON = SETTINGS_DIR / "transaction_overrides.json"
 
 APP_NAME = "PersonalFinance"
 DEFAULT_OCR_BACKEND = "vlm-mlx-engine"

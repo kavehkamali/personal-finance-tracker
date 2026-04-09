@@ -4,6 +4,13 @@ from typing import Any
 
 import pandas as pd
 
+from personal_finance.categories import (
+    BENEFICIARY_OPTIONS,
+    CATEGORY_OPTIONS,
+    NECESSITY_OPTIONS,
+)
+from personal_finance.transaction_overrides import transaction_key_series
+
 
 def _series_to_records(series: pd.Series, value_name: str) -> list[dict[str, Any]]:
     if series.empty:
@@ -23,6 +30,12 @@ def _frame_to_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
     return out.to_dict(orient="records")
 
 
+def _clean_list(values: list[str] | None) -> list[str]:
+    if not values:
+        return []
+    return [str(v).strip() for v in values if str(v).strip()]
+
+
 def apply_filters(
     df: pd.DataFrame,
     owner: str | None = None,
@@ -32,6 +45,9 @@ def apply_filters(
     beneficiary: str | None = None,
     month: str | None = None,
     include_internal: bool = False,
+    exclude_categories: list[str] | None = None,
+    exclude_necessities: list[str] | None = None,
+    exclude_beneficiaries: list[str] | None = None,
 ) -> pd.DataFrame:
     filtered = df.copy()
     if owner:
@@ -48,6 +64,15 @@ def apply_filters(
         filtered = filtered[filtered["month"].astype(str) == str(month)]
     if not include_internal and "is_internal" in filtered.columns:
         filtered = filtered[~filtered["is_internal"].fillna(False)]
+    ex_c = _clean_list(exclude_categories)
+    if ex_c and "category" in filtered.columns:
+        filtered = filtered[~filtered["category"].isin(ex_c)]
+    ex_n = _clean_list(exclude_necessities)
+    if ex_n and "necessity" in filtered.columns:
+        filtered = filtered[~filtered["necessity"].isin(ex_n)]
+    ex_b = _clean_list(exclude_beneficiaries)
+    if ex_b and "beneficiary" in filtered.columns:
+        filtered = filtered[~filtered["beneficiary"].isin(ex_b)]
     return filtered
 
 
@@ -84,6 +109,59 @@ def _build_owner_beneficiary_sankey(expense_rows: pd.DataFrame) -> dict[str, Any
     return {"nodes": all_nodes, "links": links}
 
 
+def _build_category_review(filtered: pd.DataFrame, limit: int = 100) -> list[dict[str, Any]]:
+    """Transactions that likely need human categorization (Other, unknown merchant, or no keyword rule)."""
+    if filtered.empty:
+        return []
+    work = filtered.copy()
+    if "tx_key" not in work.columns:
+        try:
+            work["tx_key"] = transaction_key_series(work)
+        except (TypeError, ValueError, KeyError):
+            work["tx_key"] = ""
+    cat = work["category"].astype(str)
+    merchant_l = work["merchant"].fillna("").astype(str).str.lower()
+    kw = work["matched_keyword"].fillna("").astype(str).str.strip().eq("")
+    ft = work["flow_type"].astype(str)
+    src = work["category_source"].fillna("").astype(str) if "category_source" in work.columns else pd.Series("", index=work.index)
+    unk = merchant_l.str.startswith("unknown")
+    spendish = ft.isin(["Expense", "Fees"])
+    not_special = ~cat.isin(["Internal Transfer", "Income", "Refund"])
+    not_user_fixed = ~src.eq("override")
+    mask = ((cat == "Other") | unk | (kw & spendish & not_special)) & not_user_fixed
+    subset = work.loc[mask].copy()
+    if subset.empty:
+        return []
+    subset["_abs_exp"] = pd.to_numeric(subset["expense_amount"], errors="coerce").fillna(0.0).abs()
+    subset = subset.sort_values("_abs_exp", ascending=False).head(limit).drop(columns=["_abs_exp"])
+    cols = [
+        "tx_key",
+        "transaction_date",
+        "owner",
+        "account_label",
+        "merchant",
+        "description",
+        "amount",
+        "expense_amount",
+        "category",
+        "necessity",
+        "beneficiary",
+        "flow_type",
+        "category_source",
+        "matched_keyword",
+    ]
+    present = [c for c in cols if c in subset.columns]
+    return _frame_to_records(subset[present])
+
+
+def _taxonomy() -> dict[str, list[str]]:
+    return {
+        "categories": list(CATEGORY_OPTIONS),
+        "necessities": list(NECESSITY_OPTIONS),
+        "beneficiaries": list(BENEFICIARY_OPTIONS),
+    }
+
+
 def _build_waterfall(expense_rows: pd.DataFrame) -> list[dict[str, Any]]:
     if expense_rows.empty:
         return []
@@ -107,6 +185,9 @@ def build_dashboard_payload(
     beneficiary: str | None = None,
     month: str | None = None,
     include_internal: bool = False,
+    exclude_categories: list[str] | None = None,
+    exclude_necessities: list[str] | None = None,
+    exclude_beneficiaries: list[str] | None = None,
 ) -> dict[str, Any]:
     if df.empty:
         return {
@@ -150,9 +231,25 @@ def build_dashboard_payload(
             "recent_transactions": [],
             "statement_breakdown": [],
             "sankey": {"nodes": [], "links": []},
+            "filter_dimensions": {
+                "categories": list(CATEGORY_OPTIONS),
+                "necessities": [n for n in NECESSITY_OPTIONS if n != "Auto"],
+                "beneficiaries": [b for b in BENEFICIARY_OPTIONS if b != "Auto"],
+            },
+            "internal_review": {
+                "stats": {},
+                "caption": "",
+                "matched_transfers": [],
+                "unmatched_internal": [],
+                "other_uncategorized": [],
+            },
+            "taxonomy": _taxonomy(),
+            "category_review": [],
         }
 
     base = df.copy()
+    if "internal_detection" not in base.columns:
+        base["internal_detection"] = "none"
     scope = apply_filters(
         base,
         owner=owner,
@@ -162,6 +259,9 @@ def build_dashboard_payload(
         beneficiary=beneficiary,
         month=month,
         include_internal=True,
+        exclude_categories=exclude_categories,
+        exclude_necessities=exclude_necessities,
+        exclude_beneficiaries=exclude_beneficiaries,
     )
     filtered = apply_filters(
         base,
@@ -172,6 +272,9 @@ def build_dashboard_payload(
         beneficiary=beneficiary,
         month=month,
         include_internal=include_internal,
+        exclude_categories=exclude_categories,
+        exclude_necessities=exclude_necessities,
+        exclude_beneficiaries=exclude_beneficiaries,
     )
     expense_rows = filtered[filtered["expense_amount"] > 0].copy()
 
@@ -196,6 +299,11 @@ def build_dashboard_payload(
         "necessities": sorted(base["necessity"].dropna().unique().tolist()),
         "beneficiaries": sorted(base["beneficiary"].dropna().unique().tolist()),
         "months": sorted(base["month"].dropna().unique().tolist()),
+    }
+    filter_dimensions = {
+        "categories": list(CATEGORY_OPTIONS),
+        "necessities": [n for n in NECESSITY_OPTIONS if str(n) != "Auto"],
+        "beneficiaries": [b for b in BENEFICIARY_OPTIONS if str(b) != "Auto"],
     }
 
     monthly_expenses = (
@@ -307,6 +415,8 @@ def build_dashboard_payload(
                 "description_left": first["description"],
                 "description_right": second["description"],
                 "amount": round(abs(float(first["cash_flow_amount"])), 2),
+                "tag_left": str(first.get("matched_keyword", "") or ""),
+                "tag_right": str(second.get("matched_keyword", "") or ""),
             }
         )
 
@@ -319,31 +429,65 @@ def build_dashboard_payload(
         .head(25)
     )
 
-    recent_transactions = (
-        filtered[
-            [
-                "transaction_date",
-                "owner",
-                "account_label",
-                "merchant",
-                "description",
-                "category",
-                "necessity",
-                "beneficiary",
-                "flow_type",
-                "amount",
-                "expense_amount",
-                "internal_match_status",
-            ]
-        ]
-        .sort_values("transaction_date", ascending=False)
-        .head(80)
-    )
+    recent_cols = [
+        "transaction_date",
+        "owner",
+        "account_label",
+        "merchant",
+        "description",
+        "category",
+        "necessity",
+        "beneficiary",
+        "flow_type",
+        "amount",
+        "expense_amount",
+        "internal_match_status",
+        "tx_key",
+        "category_source",
+    ]
+    recent_present = [c for c in recent_cols if c in filtered.columns]
+    recent_transactions = filtered[recent_present].sort_values("transaction_date", ascending=False).head(80)
+
+    category_review = _build_category_review(filtered, limit=100)
+
+    amt_timing_pairs = 0
+    if "matched_keyword" in scope.columns:
+        mt_matched = scope[scope["internal_match_status"] == "Matched"]
+        amt_timing_pairs = int(mt_matched.loc[mt_matched["matched_keyword"].astype(str) == "amount+timing", "match_id"].nunique())
+
+    internal_stats = {
+        "rows_keyword": int((scope["internal_detection"] == "keyword").sum()),
+        "rows_paired": int((scope["internal_detection"] == "paired").sum()),
+        "rows_unmatched_candidate": int((scope["internal_detection"] == "unmatched_candidate").sum()),
+        "pair_count": overview["matched_internal_pairs"],
+        "pairs_amount_timing": amt_timing_pairs,
+    }
+
+    other_mask = (scope["category"] == "Other") & (~scope["is_internal"].fillna(False))
+    other_uncat = scope.loc[other_mask].copy()
+    if not other_uncat.empty and "amount" in other_uncat.columns:
+        other_uncat["abs_amt"] = pd.to_numeric(other_uncat["amount"], errors="coerce").abs()
+        other_uncat = other_uncat.sort_values("abs_amt", ascending=False).head(25)
+    other_cols = [c for c in ("transaction_date", "account_label", "description", "amount", "merchant") if c in other_uncat.columns]
+    other_uncategorized = _frame_to_records(other_uncat[other_cols]) if other_cols else []
+
+    internal_review = {
+        "stats": internal_stats,
+        "caption": (
+            "Keyword = transfer language on the statement. Paired = two legs with opposite cash flow, same amount (±1¢), "
+            "different accounts, within 7 days. amount+timing = paired by amount/date without a strong transfer phrase on both sides. "
+            "Review unmatched candidates and Other rows to tune rules."
+        ),
+        "matched_transfers": matched_transfers[:35],
+        "unmatched_internal": _frame_to_records(unmatched_internal.head(30)),
+        "other_uncategorized": other_uncategorized,
+    }
 
     return {
         "meta": meta,
         "overview": overview,
         "filters": filters,
+        "filter_dimensions": filter_dimensions,
         "monthly_expenses": _frame_to_records(monthly_expenses.rename(columns={"month": "label"})),
         "daily_expenses": _frame_to_records(daily_expenses.rename(columns={"date": "label"})),
         "category_breakdown": _frame_to_records(category_breakdown.rename(columns={"category": "label"})),
@@ -366,4 +510,7 @@ def build_dashboard_payload(
         "recent_transactions": _frame_to_records(recent_transactions),
         "statement_breakdown": _frame_to_records(statement_breakdown),
         "sankey": _build_owner_beneficiary_sankey(expense_rows),
+        "internal_review": internal_review,
+        "taxonomy": _taxonomy(),
+        "category_review": category_review,
     }

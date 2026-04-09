@@ -9,6 +9,7 @@ from typing import Callable, Iterable
 import pandas as pd
 
 from personal_finance.categories import classify_transaction, infer_flow_type, load_category_rules, normalize_merchant, normalize_text
+from personal_finance.transaction_overrides import apply_transaction_overrides, transaction_key_series
 from personal_finance.merchant_aliases import invalidate_merchant_aliases_cache
 from personal_finance.config import (
     DATA_DIR,
@@ -103,8 +104,38 @@ def _is_internal_candidate(description: str, flow_type: str) -> bool:
     text = normalize_text(description).lower()
     if flow_type == "Internal Transfer":
         return True
-    keywords = ("payment", "transfer", "e-transfer", "etransfer", "autopay", "bill payment")
-    return any(keyword in text for keyword in keywords)
+    # Phrase-based — avoid bare "payment" / "transfer" (matches retail and app copy).
+    phrases = (
+        "e-transfer",
+        "etransfer",
+        "interac",
+        "bill payment",
+        "credit card payment",
+        "online banking payment",
+        "pre-authorized payment",
+        "preauthorized payment",
+        "payment - thank",
+        "paiement",
+        "autopay",
+        "automatic payment",
+        "funds transfer",
+        "account transfer",
+        "online transfer",
+        "wire transfer",
+        "tfr ",
+        " tfr",
+        "withdrawal",
+        "deposit",
+        "savings",
+        "chequing",
+        "checking",
+        "investment",
+        "visa payment",
+        "mc payment",
+        "line of credit",
+        "loc payment",
+    )
+    return any(p in text for p in phrases)
 
 
 def _score_transfer_match(left: pd.Series, right: pd.Series) -> float:
@@ -144,7 +175,7 @@ def _match_internal_transfers(df: pd.DataFrame) -> pd.DataFrame:
             pos_row = df.loc[pos_idx]
             if abs(abs(float(pos_row["cash_flow_amount"])) - abs(float(neg_row["cash_flow_amount"]))) > 0.01:
                 continue
-            if abs((pos_row["transaction_date"] - neg_row["transaction_date"]).days) > 5:
+            if abs((pos_row["transaction_date"] - neg_row["transaction_date"]).days) > 7:
                 continue
             score = _score_transfer_match(neg_row, pos_row)
             if best_score is None or score > best_score:
@@ -162,6 +193,118 @@ def _match_internal_transfers(df: pd.DataFrame) -> pd.DataFrame:
 
     unmatched_mask = df["is_internal_candidate"] & (df["internal_match_status"] == "None")
     df.loc[unmatched_mask, "internal_match_status"] = "Unmatched"
+    return df
+
+
+def _amount_timing_hints(text: str) -> bool:
+    t = normalize_text(text).lower()
+    hints = (
+        "payment",
+        "transfer",
+        "deposit",
+        "withdrawal",
+        "savings",
+        "chequing",
+        "checking",
+        "investment",
+        "visa",
+        "mastercard",
+        "mortgage",
+        "loan",
+        "credit bal",
+        "pre-auth",
+        "preauth",
+    )
+    return any(h in t for h in hints)
+
+
+def _match_internal_transfers_second_pass(df: pd.DataFrame) -> pd.DataFrame:
+    """Pair opposite cash-flow rows with matching amounts across different accounts (timing heuristic)."""
+    if df.empty:
+        return df
+
+    df = df.copy()
+    already = df["internal_match_status"] == "Matched"
+    matched_idx = set(df.index[already])
+    pool_idx = [i for i in df.index if i not in matched_idx and float(df.loc[i, "cash_flow_amount"]) != 0.0]
+    positives = [i for i in pool_idx if float(df.loc[i, "cash_flow_amount"]) > 0]
+    negatives = [i for i in pool_idx if float(df.loc[i, "cash_flow_amount"]) < 0]
+    used_positive: set[int] = set()
+    existing = 0
+    for mid in df["match_id"].unique():
+        if isinstance(mid, str) and mid.startswith("match-"):
+            try:
+                existing = max(existing, int(mid.split("-", 1)[1]))
+            except (ValueError, IndexError):
+                pass
+    match_counter = existing + 1
+
+    for neg_idx in negatives:
+        if neg_idx in matched_idx:
+            continue
+        neg_row = df.loc[neg_idx]
+        neg_amt = abs(float(neg_row["cash_flow_amount"]))
+        if neg_amt < 5.0:
+            continue
+        best_idx = None
+        best_score = None
+        for pos_idx in positives:
+            if pos_idx in used_positive or pos_idx in matched_idx:
+                continue
+            pos_row = df.loc[pos_idx]
+            if abs(abs(float(pos_row["cash_flow_amount"])) - neg_amt) > 0.01:
+                continue
+            if abs((pos_row["transaction_date"] - neg_row["transaction_date"]).days) > 7:
+                continue
+            if pos_row["account_label"] == neg_row["account_label"]:
+                continue
+            if not (
+                _amount_timing_hints(str(neg_row["description"]))
+                or _amount_timing_hints(str(pos_row["description"]))
+            ):
+                continue
+            score = _score_transfer_match(neg_row, pos_row)
+            if best_score is None or score > best_score:
+                best_idx = pos_idx
+                best_score = score
+
+        if best_idx is None:
+            continue
+
+        match_id = f"match-{match_counter:04d}"
+        match_counter += 1
+        used_positive.add(best_idx)
+        matched_idx.update({neg_idx, best_idx})
+        df.loc[[neg_idx, best_idx], "match_id"] = match_id
+        df.loc[[neg_idx, best_idx], "internal_match_status"] = "Matched"
+        df.loc[[neg_idx, best_idx], "is_internal_candidate"] = True
+        for idx in (neg_idx, best_idx):
+            if str(df.loc[idx, "matched_keyword"] or "").strip() == "":
+                df.loc[idx, "matched_keyword"] = "amount+timing"
+
+    return df
+
+
+def _apply_internal_labels(df: pd.DataFrame) -> pd.DataFrame:
+    """Align category and flow for paired / keyword internal rows."""
+    df = df.copy()
+    paired = df["internal_match_status"] == "Matched"
+    keyword_before_pairing = df["flow_type"] == "Internal Transfer"
+    df.loc[paired, "flow_type"] = "Internal Transfer"
+    df.loc[paired, "category"] = "Internal Transfer"
+    df.loc[paired, "necessity"] = "Savings & Transfers"
+    df.loc[paired, "beneficiary"] = "Shared"
+    blank_kw = paired & (df["matched_keyword"].fillna("") == "")
+    df.loc[blank_kw, "matched_keyword"] = "paired transfer"  # keyword-candidate pairs with no rule match
+
+    df["internal_detection"] = "none"
+    cand_unmatched = df["is_internal_candidate"] & (df["internal_match_status"] == "Unmatched")
+    df.loc[cand_unmatched, "internal_detection"] = "unmatched_candidate"
+    df.loc[keyword_before_pairing & ~paired, "internal_detection"] = "keyword"
+    df.loc[paired, "internal_detection"] = "paired"
+    if "category_source" in df.columns:
+        df.loc[paired, "category_source"] = "internal_pair"
+        df.loc[keyword_before_pairing & ~paired, "category_source"] = "internal_keyword"
     return df
 
 
@@ -226,6 +369,8 @@ def _enrich_transactions(df: pd.DataFrame) -> pd.DataFrame:
     df["necessity"] = classifications["necessity"]
     df["beneficiary"] = classifications["beneficiary"]
     df["matched_keyword"] = classifications["matched_keyword"]
+    df["tx_key"] = transaction_key_series(df)
+    df["category_source"] = df["matched_keyword"].fillna("").astype(str).map(lambda s: "rule" if s.strip() else "auto")
     df["expense_amount"] = df.apply(_expense_amount, axis=1)
     df["month"] = df["transaction_date"].dt.to_period("M").astype(str)
     df["weekday"] = df["transaction_date"].dt.day_name()
@@ -343,7 +488,10 @@ def rebuild_dataset(
     combined = _enrich_transactions(combined)
     emit("matching", "Reconciling internal transfers", 0.88)
     combined = _match_internal_transfers(combined)
+    combined = _match_internal_transfers_second_pass(combined)
+    combined = _apply_internal_labels(combined)
     combined["is_internal"] = combined["flow_type"].eq("Internal Transfer") | combined["internal_match_status"].eq("Matched")
+    combined = apply_transaction_overrides(combined)
     combined["expense_amount"] = combined.apply(_expense_amount, axis=1)
     combined = combined.sort_values(["transaction_date", "account_label", "amount"], ascending=[True, True, False])
     emit("writing", "Writing processed outputs", 0.96)
@@ -363,6 +511,15 @@ def load_transactions() -> pd.DataFrame:
         return df
     df["transaction_date"] = pd.to_datetime(df["transaction_date"], errors="coerce")
     df["posting_date"] = pd.to_datetime(df["posting_date"], errors="coerce")
+    if "internal_detection" not in df.columns:
+        df["internal_detection"] = "none"
+    if "tx_key" not in df.columns and not df.empty:
+        try:
+            df["tx_key"] = transaction_key_series(df)
+        except (TypeError, ValueError, KeyError):
+            df["tx_key"] = ""
+    if "category_source" not in df.columns:
+        df["category_source"] = "auto"
     return df
 
 

@@ -30,106 +30,132 @@
     </header>
 
     <div class="mint-layout">
-      <aside class="dash-sidebar" id="dash-sidebar" aria-label="Dashboard layout">
+      <aside class="dash-sidebar" id="dash-sidebar" aria-label="Scope and layout">
         <div class="dash-sidebar-header">
-          <h2 class="dash-sidebar-title">Layout</h2>
+          <div class="dash-sidebar-brand">
+            <h2 class="dash-sidebar-title">Workspace</h2>
+            <p class="dash-sidebar-sub">Scope, exclusions, and layout</p>
+          </div>
           <button type="button" class="dash-sidebar-pin" id="dash-sidebar-toggle" aria-expanded="true" aria-controls="dash-sidebar-body" title="Collapse sidebar">
             ‹
           </button>
         </div>
 
         <div class="dash-sidebar-body" id="dash-sidebar-body">
+          <div class="dash-sidebar-group dash-sidebar-group--scope">
+            <h3 class="dash-sidebar-heading">Scope</h3>
+            <p class="dash-sidebar-hint">Month and dimensions — all charts and tables follow these filters.</p>
+            <div class="sidebar-filters">
+              <label class="sidebar-field">
+                <span class="sidebar-field-label">Month</span>
+                <select id="month-filter" class="sidebar-select"></select>
+              </label>
+              <label class="sidebar-field">
+                <span class="sidebar-field-label">Owner</span>
+                <select id="owner-filter" class="sidebar-select"></select>
+              </label>
+              <label class="sidebar-field">
+                <span class="sidebar-field-label">Account</span>
+                <select id="account-filter" class="sidebar-select"></select>
+              </label>
+              <label class="sidebar-field">
+                <span class="sidebar-field-label">Category</span>
+                <select id="category-filter" class="sidebar-select"></select>
+              </label>
+              <label class="sidebar-field">
+                <span class="sidebar-field-label">Need level</span>
+                <select id="necessity-filter" class="sidebar-select"></select>
+              </label>
+              <label class="sidebar-field">
+                <span class="sidebar-field-label">Beneficiary</span>
+                <select id="beneficiary-filter" class="sidebar-select"></select>
+              </label>
+              <label class="sidebar-switch">
+                <input id="internal-toggle" type="checkbox" />
+                <span class="sidebar-switch-ui" aria-hidden="true"></span>
+                <span class="sidebar-switch-text">Include internal transfers in spend charts</span>
+              </label>
+            </div>
+          </div>
+
           <div class="dash-sidebar-group">
-            <h3 class="dash-sidebar-heading">Presets</h3>
-            <p class="dash-sidebar-hint">Quick layouts for analysis</p>
-            <div class="dash-preset-row">
-              <button type="button" class="mint-btn mint-btn-ghost dash-preset-btn" data-dash-preset="full">Full</button>
-              <button type="button" class="mint-btn mint-btn-ghost dash-preset-btn" data-dash-preset="minimal">Essentials</button>
-              <button type="button" class="mint-btn mint-btn-ghost dash-preset-btn" data-dash-preset="household">Household</button>
-              <button type="button" class="mint-btn mint-btn-ghost dash-preset-btn" data-dash-preset="reconcile">Reconcile</button>
-              <button type="button" class="mint-btn mint-btn-ghost dash-preset-btn" data-dash-preset="trends">Trends</button>
+            <h3 class="dash-sidebar-heading">Hide from totals</h3>
+            <p class="dash-sidebar-hint">Checked categories, need levels, or people are removed from aggregates (not from raw statements).</p>
+            <details class="exclude-details" open>
+              <summary class="exclude-details-summary">Categories</summary>
+              <div id="exclude-categories-list" class="exclude-scroll" aria-label="Exclude categories"></div>
+            </details>
+            <details class="exclude-details">
+              <summary class="exclude-details-summary">Need levels</summary>
+              <div id="exclude-necessities-list" class="exclude-scroll" aria-label="Exclude need levels"></div>
+            </details>
+            <details class="exclude-details">
+              <summary class="exclude-details-summary">Beneficiaries</summary>
+              <div id="exclude-beneficiaries-list" class="exclude-scroll" aria-label="Exclude beneficiaries"></div>
+            </details>
+          </div>
+
+          <div class="dash-sidebar-group">
+            <h3 class="dash-sidebar-heading">Layout presets</h3>
+            <p class="dash-sidebar-hint">Start from a curated panel set, then fine-tune below.</p>
+            <div class="dash-preset-segment" role="group" aria-label="Layout presets">
+              <button type="button" class="dash-seg-btn" data-dash-preset="full">Full</button>
+              <button type="button" class="dash-seg-btn" data-dash-preset="minimal">Essentials</button>
+              <button type="button" class="dash-seg-btn" data-dash-preset="household">Household</button>
+              <button type="button" class="dash-seg-btn" data-dash-preset="reconcile">Reconcile</button>
+              <button type="button" class="dash-seg-btn" data-dash-preset="trends">Trends</button>
             </div>
           </div>
 
           <div class="dash-sidebar-group">
             <h3 class="dash-sidebar-heading">Visible panels</h3>
-            <p class="dash-sidebar-hint">Charts &amp; tables on the dashboard</p>
+            <p class="dash-sidebar-hint">Charts and tables in the main column</p>
             <div class="dash-toggle-list" id="dash-toggle-list"></div>
           </div>
 
           <div class="dash-sidebar-group dash-sidebar-footer">
-            <button type="button" class="mint-btn mint-btn-primary dash-action-btn" id="dash-show-all">Show all</button>
-            <button type="button" class="mint-btn mint-btn-ghost dash-action-btn" id="dash-reset-layout">Clear saved layout</button>
+            <button type="button" class="dash-footer-primary" id="dash-show-all">Show all panels</button>
+            <button type="button" class="dash-footer-ghost" id="dash-reset-layout">Reset layout memory</button>
           </div>
         </div>
       </aside>
 
       <main class="dash-main" id="dash-main">
     <div class="page-shell">
-      <section class="mint-panel upload-panel">
-        <div class="upload-head mint-upload-head">
-          <h2 class="mint-panel-title">Add statements</h2>
-          <p class="upload-caption">PDF or markdown — drop below or choose files.</p>
+      <section class="mint-panel upload-panel upload-panel--compact" aria-label="Upload statements">
+        <div class="upload-row">
+          <form id="upload-form" class="dropzone dropzone--compact">
+            <input id="file-input" type="file" name="files" multiple accept=".pdf,.md" hidden />
+            <div class="dropzone-inner">
+              <span class="upload-ic-wrap" aria-hidden="true">
+                <svg class="upload-ic" viewBox="0 0 24 24" width="22" height="22" focusable="false">
+                  <path
+                    fill="currentColor"
+                    d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"
+                  />
+                </svg>
+              </span>
+              <span class="dropzone-text"><strong>Drop</strong> PDF / markdown</span>
+              <span class="dropzone-sep">·</span>
+              <button type="button" id="browse-button" class="mint-btn mint-btn-primary mint-btn--sm">Choose files</button>
+            </div>
+          </form>
         </div>
 
-        <form id="upload-form" class="dropzone">
-          <input id="file-input" type="file" name="files" multiple accept=".pdf,.md" hidden />
-          <div class="dropzone-copy">
-            <span class="dropzone-icon" aria-hidden="true">+</span>
-            <strong>Drag &amp; drop</strong>
-            <span class="dropzone-hint">or</span>
-            <button type="button" id="browse-button" class="mint-btn mint-btn-primary">Choose files</button>
+        <div id="upload-progress-wrap" class="upload-progress-wrap" hidden>
+          <div class="upload-progress-line">
+            <span id="upload-progress-text" class="upload-progress-text">Processing…</span>
+            <span id="upload-progress-pct" class="upload-progress-pct"></span>
           </div>
-        </form>
-
-        <div class="progress-shell">
-          <div class="progress-head">
-            <span id="progress-label">Idle</span>
-            <span id="progress-meta">0%</span>
-          </div>
-          <div class="progress-track">
+          <div class="progress-track progress-track--thin">
             <div id="progress-fill" class="progress-fill"></div>
           </div>
         </div>
 
-        <div id="status-banner" class="status-banner">Loading data…</div>
-      </section>
+        <div id="upload-feedback" class="upload-feedback" hidden></div>
+        <p id="activity-hint" class="activity-hint" hidden></p>
 
-      <section class="mint-panel control-bar">
-        <div class="control-copy">
-          <h2 class="mint-panel-title mint-panel-title--sm">Scope</h2>
-          <p class="control-hint">Slice by month or dimension — charts and tables update together.</p>
-        </div>
-        <div class="filters">
-          <label>
-            <span>Month</span>
-            <select id="month-filter"></select>
-          </label>
-          <label>
-            <span>Owner</span>
-            <select id="owner-filter"></select>
-          </label>
-          <label>
-            <span>Account</span>
-            <select id="account-filter"></select>
-          </label>
-          <label>
-            <span>Category</span>
-            <select id="category-filter"></select>
-          </label>
-          <label>
-            <span>Need Level</span>
-            <select id="necessity-filter"></select>
-          </label>
-          <label>
-            <span>Beneficiary</span>
-            <select id="beneficiary-filter"></select>
-          </label>
-          <label class="toggle">
-            <input id="internal-toggle" type="checkbox" />
-            <span>Show internal flows in charts</span>
-          </label>
-        </div>
+        <div id="status-banner" class="status-banner status-banner--error" role="alert" hidden></div>
       </section>
 
       <section class="section-block" data-dash-section="overview">
@@ -145,14 +171,14 @@
       <section class="section-block" data-dash-section="trends">
         <div class="section-heading mint-section-head">
           <h2 class="mint-section-title">Insights &amp; charts</h2>
-          <p class="mint-section-lead">Mix of trend, part-to-whole, hierarchy, and flow views — toggle panels from the left sidebar.</p>
+          <p class="mint-section-lead">Mix of trend, part-to-whole, hierarchy, and flow views — toggle panels from the workspace sidebar.</p>
         </div>
 
         <section class="chart-grid">
           <article class="card card-hero mint-card mint-card--hero" data-dash-panel="chart-monthly">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Monthly spend trend</h3>
-              <p class="mint-card-desc">Area + points — use <strong>Month</strong> filter above to focus one period.</p>
+              <p class="mint-card-desc">Area + points — use <strong>Month</strong> in the sidebar to focus one period.</p>
             </div>
             <div id="monthly-chart" class="chart"></div>
           </article>
@@ -292,6 +318,25 @@
         </section>
       </section>
 
+      <section class="section-block section-block--categorize" data-dash-section="categorize">
+        <section class="table-grid">
+          <article class="card card-full mint-card mint-card--cat-review" data-dash-panel="panel-category-review">
+            <div class="card-head mint-card-head mint-card-head--row cat-review-card-head">
+              <div>
+                <h3 class="mint-card-title">Fix categories</h3>
+                <p class="mint-card-desc cat-review-card-desc">
+                  Rows here are <strong>Other</strong>, <strong>unknown merchants</strong>, or <strong>spend with no keyword rule</strong>.
+                  Set category and need level, optionally add a keyword rule for future imports.
+                </p>
+              </div>
+              <button type="button" class="cat-review-save-btn" id="category-review-save">Save changes</button>
+            </div>
+            <div id="category-review-toolbar" class="cat-review-toolbar" aria-hidden="true"></div>
+            <div id="category-review-list" class="category-review-list"></div>
+          </article>
+        </section>
+      </section>
+
       <section class="section-block section-block--rules" data-dash-section="rules">
         <section class="table-grid">
           <article class="card card-full mint-card mint-card--rules" data-dash-panel="panel-rules">
@@ -342,6 +387,31 @@
             <div id="recent-transactions" class="table-panel table-panel--scroll"></div>
           </article>
         </section>
+      </section>
+
+      <section class="internal-review-section mint-panel" aria-label="Internal transfers and categorization check">
+        <div class="internal-review-head">
+          <h2 class="internal-review-title">Reconciliation &amp; quality check</h2>
+          <p class="internal-review-lead" id="internal-review-caption"></p>
+        </div>
+        <div class="internal-review-stats" id="internal-review-stats"></div>
+        <div class="internal-review-grid">
+          <article class="internal-review-card">
+            <h3 class="internal-review-card-title">Matched transfer pairs</h3>
+            <p class="internal-review-card-hint">Legs share amount (±1¢) and land within 7 days on different accounts.</p>
+            <div id="internal-review-matched" class="internal-review-table-wrap"></div>
+          </article>
+          <article class="internal-review-card">
+            <h3 class="internal-review-card-title">Unmatched transfer candidates</h3>
+            <p class="internal-review-card-hint">Text looks like a move between accounts but no opposite leg was found.</p>
+            <div id="internal-review-unmatched" class="internal-review-table-wrap"></div>
+          </article>
+          <article class="internal-review-card internal-review-card--wide">
+            <h3 class="internal-review-card-title">Largest &quot;Other&quot; spend</h3>
+            <p class="internal-review-card-hint">Add keyword rules for merchants you see here to reduce uncategorized noise.</p>
+            <div id="internal-review-other" class="internal-review-table-wrap"></div>
+          </article>
+        </div>
       </section>
     </div>
       </main>
