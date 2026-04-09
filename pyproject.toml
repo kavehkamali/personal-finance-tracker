@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "personalfinance"
+version = "0.1.0"
+description = "Household finance ingestion, reconciliation, and dashboarding for RBC statements."
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "aiofiles>=24.1.0",
+  "cryptography>=43.0.0",
+  "fastapi>=0.116.0",
+  "jinja2>=3.1.6",
+  "pandas>=2.2.3",
+  "pypdf>=5.0.0",
+  "python-multipart>=0.0.20",
+  "uvicorn[standard]>=0.35.0",
+]
+
+[project.optional-dependencies]
+ocr = [
+  "loguru>=0.7.3",
+  "mineru>=2.1.9",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/personal_finance"]
+
+[tool.uv]
+package = true

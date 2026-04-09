@@ -1,0 +1,30 @@
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+
+# Local statement PDFs / markdown (keep folder via .gitkeep only)
+input_statements/**
+!input_statements/.gitkeep
+
+# All regenerable & upload caches
+.cache/
+
+# User-edited config produced at runtime (defaults created on first run)
+data/settings/**
+!data/settings/.gitkeep
+
+# Legacy layout (safe to remove locally after migration)
+data/uploads/
+data/ocr_output/
+data/processed/
+
+# Old experiment trees (do not commit)
+analysis/
+qwen/
