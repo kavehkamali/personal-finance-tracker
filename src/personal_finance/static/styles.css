@@ -1530,25 +1530,40 @@ td {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   margin-top: -2px;
 }
 
 .panel-chrome-drag,
 .panel-chrome-hide {
-  width: 30px;
-  height: 30px;
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
   padding: 0;
-  border-radius: 8px;
+  border-radius: 4px;
   border: 1px solid var(--border-light);
   background: var(--page-bg);
   color: var(--muted);
-  font-size: 0.875rem;
   line-height: 1;
-  cursor: grab;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.panel-chrome-drag {
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.panel-chrome-drag::before {
+  content: "☰";
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.72;
+  pointer-events: none;
 }
 
 .panel-chrome-drag:active {
@@ -1556,7 +1571,7 @@ td {
 }
 
 .panel-chrome-hide {
-  font-size: 1.125rem;
+  font-size: 0.8125rem;
   cursor: pointer;
 }
 

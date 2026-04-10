@@ -2354,12 +2354,11 @@ function installChartPanelChrome() {
     }
     const tools = document.createElement("div");
     tools.className = "panel-chrome";
+    // Use <span draggable> — <button draggable> often fails to start a drag in Chrome / Safari.
     tools.innerHTML =
-      '<button type="button" class="panel-chrome-drag" aria-label="Drag to reorder" title="Drag to reorder">⋮⋮</button>' +
+      '<span class="panel-chrome-drag" draggable="true" role="button" tabindex="0" aria-label="Drag to reorder" title="Drag to reorder"></span>' +
       '<button type="button" class="panel-chrome-hide" aria-label="Hide chart" title="Hide chart">×</button>';
     head.appendChild(tools);
-    const dragBtn = tools.querySelector(".panel-chrome-drag");
-    if (dragBtn) dragBtn.draggable = true;
   });
 }
 
@@ -2386,14 +2385,39 @@ function bindChartGridChrome() {
 
   grid.addEventListener("dragover", (e) => {
     e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
   });
 
   grid.addEventListener("drop", (e) => {
     e.preventDefault();
-    const tgt = e.target.closest("article[data-dash-panel]");
-    if (!dragChartArticle || !tgt || !grid.contains(tgt)) return;
+    if (!dragChartArticle) return;
+
+    const visibleArticles = () =>
+      [...grid.querySelectorAll(":scope > article[data-dash-panel]")].filter(
+        (a) => !a.classList.contains("dash-panel-hidden"),
+      );
+
+    let tgt = e.target.closest("article[data-dash-panel]");
+    if (!tgt || !grid.contains(tgt)) {
+      const stack = document.elementsFromPoint(e.clientX, e.clientY);
+      const found = stack.find(
+        (el) => el instanceof HTMLElement && el.matches("article[data-dash-panel]") && grid.contains(el),
+      );
+      tgt = found || null;
+    }
+
+    if (!tgt || tgt.classList.contains("dash-panel-hidden")) {
+      const vis = visibleArticles().filter((a) => a !== dragChartArticle);
+      const last = vis[vis.length - 1];
+      if (last) grid.insertBefore(dragChartArticle, last.nextSibling);
+      else grid.appendChild(dragChartArticle);
+      persistChartOrder();
+      scheduleDashChartResize();
+      return;
+    }
+
     if (tgt === dragChartArticle) return;
+
     const rect = tgt.getBoundingClientRect();
     const before = e.clientY < rect.top + rect.height / 2;
     if (before) grid.insertBefore(dragChartArticle, tgt);
