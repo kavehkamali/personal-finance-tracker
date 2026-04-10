@@ -58,6 +58,11 @@ const EXTRACTION_PRESET_STORAGE_KEY = "pf-extraction-preset-v1";
 const DASH_CHART_ORDER_KEY = "pf-chart-order-v1";
 
 let dashboardDebouncer = null;
+/** Shown after the next loadDashboard completes (chart drill-down feedback). */
+let pendingDrilldownHint = null;
+let pendingDrilldownScroll = false;
+/** Substring filter for /api/summary `q` (e.g. merchant bar click); cleared when sidebar filters change. */
+let summaryTextSearch = "";
 
 function defaultExcludeState() {
   return { categories: [], necessities: [], beneficiaries: [] };
@@ -475,6 +480,8 @@ function buildScopeDescription() {
     const v = filterValue(id);
     if (v) parts.push(`${label}: ${v}`);
   });
+  const qs = summaryTextSearch.trim();
+  if (qs) parts.push(`Search: ${qs}`);
   if (document.getElementById("internal-toggle")?.checked) {
     parts.push("Internal transfers included in spend charts");
   }
@@ -525,6 +532,9 @@ function currentQueryParams() {
   excludeState.categories.forEach((c) => params.append("exclude_category", c));
   excludeState.necessities.forEach((n) => params.append("exclude_necessity", n));
   excludeState.beneficiaries.forEach((b) => params.append("exclude_beneficiary", b));
+
+  const q = summaryTextSearch.trim();
+  if (q) params.set("q", q);
 
   return params;
 }
@@ -794,6 +804,120 @@ function emptyChart(targetId) {
   );
 }
 
+const PLOTLY_DRILLDOWN_CHART_IDS = [
+  "chart-category-donut",
+  "category-chart",
+  "necessity-chart",
+  "beneficiary-chart",
+  "stacked-chart",
+  "merchant-chart",
+  "owner-chart",
+  "account-chart",
+  "chart-treemap",
+];
+
+function purgePlotlyDrilldownHandlers() {
+  if (typeof Plotly === "undefined") return;
+  PLOTLY_DRILLDOWN_CHART_IDS.forEach((id) => {
+    const gd = document.getElementById(id);
+    if (gd && typeof gd.removeAllListeners === "function") {
+      gd.removeAllListeners("plotly_click");
+    }
+  });
+}
+
+function applySidebarSelectValue(selectId, value) {
+  const v = String(value ?? "").trim();
+  if (!v) return false;
+  const sel = document.getElementById(selectId);
+  if (!sel) return false;
+  const has = [...sel.options].some((o) => o.value === v);
+  if (!has) return false;
+  summaryTextSearch = "";
+  sel.value = v;
+  return true;
+}
+
+function drilldownFromSidebarSelect(selectId, value, noun) {
+  const v = String(value ?? "").trim();
+  if (!v) return;
+  if (!applySidebarSelectValue(selectId, v)) {
+    showActivityHint(`No matching ${noun} filter for “${v}”.`, "", 4200);
+    return;
+  }
+  pendingDrilldownHint = `${noun} “${v}” — recent transactions below.`;
+  pendingDrilldownScroll = true;
+  scheduleDashboardRefresh();
+}
+
+function drilldownFromMerchantChart(merchantLabel) {
+  const q = String(merchantLabel ?? "").trim();
+  if (!q || q === "—") return;
+  summaryTextSearch = q;
+  pendingDrilldownHint = `Text filter (merchant) “${q}” — recent transactions below. Change any sidebar filter to clear it.`;
+  pendingDrilldownScroll = true;
+  scheduleDashboardRefresh();
+}
+
+function wirePlotlyChartDrilldown(hasSpendData) {
+  if (typeof Plotly === "undefined") return;
+  purgePlotlyDrilldownHandlers();
+  if (!hasSpendData) return;
+
+  document.getElementById("chart-category-donut")?.on?.("plotly_click", (ev) => {
+    const lab = ev?.points?.[0]?.label;
+    if (lab != null) drilldownFromSidebarSelect("category-filter", lab, "Category");
+  });
+
+  document.getElementById("category-chart")?.on?.("plotly_click", (ev) => {
+    const lab = ev?.points?.[0]?.y;
+    if (lab != null) drilldownFromSidebarSelect("category-filter", lab, "Category");
+  });
+
+  document.getElementById("necessity-chart")?.on?.("plotly_click", (ev) => {
+    const lab = ev?.points?.[0]?.y;
+    if (lab != null) drilldownFromSidebarSelect("necessity-filter", lab, "Need level");
+  });
+
+  document.getElementById("beneficiary-chart")?.on?.("plotly_click", (ev) => {
+    const lab = ev?.points?.[0]?.y;
+    if (lab != null) drilldownFromSidebarSelect("beneficiary-filter", lab, "Beneficiary");
+  });
+
+  document.getElementById("stacked-chart")?.on?.("plotly_click", (ev) => {
+    const pt = ev?.points?.[0];
+    const name = pt?.fullData?.name ?? pt?.data?.name;
+    if (name != null) drilldownFromSidebarSelect("category-filter", name, "Category");
+  });
+
+  document.getElementById("merchant-chart")?.on?.("plotly_click", (ev) => {
+    const lab = ev?.points?.[0]?.y;
+    if (lab != null) drilldownFromMerchantChart(lab);
+  });
+
+  document.getElementById("owner-chart")?.on?.("plotly_click", (ev) => {
+    const lab = ev?.points?.[0]?.x;
+    if (lab != null) drilldownFromSidebarSelect("owner-filter", lab, "Owner");
+  });
+
+  document.getElementById("account-chart")?.on?.("plotly_click", (ev) => {
+    const lab = ev?.points?.[0]?.y;
+    if (lab != null) drilldownFromSidebarSelect("account-filter", lab, "Account");
+  });
+
+  document.getElementById("chart-treemap")?.on?.("plotly_click", (ev) => {
+    const pt = ev?.points?.[0];
+    const lab = pt?.label;
+    const parent = pt?.parent;
+    if (lab == null) return;
+    if (!parent) {
+      drilldownFromSidebarSelect("category-filter", lab, "Category");
+    } else {
+      drilldownFromMerchantChart(lab);
+    }
+  });
+}
+
 function sortBreakdownDesc(rows) {
   return [...rows].sort((a, b) => Number(b.value || 0) - Number(a.value || 0));
 }
@@ -912,6 +1036,7 @@ function renderCharts(summary) {
   if (!summary.monthly_expenses.length) {
     chartIds.forEach(emptyChart);
     scheduleDashChartResize();
+    wirePlotlyChartDrilldown(false);
     return;
   }
 
@@ -1319,6 +1444,7 @@ function renderCharts(summary) {
   }
 
   scheduleDashChartResize();
+  wirePlotlyChartDrilldown(true);
 }
 
 function taxonomySelectOptions(values, selected) {
@@ -1837,6 +1963,16 @@ async function loadDashboard() {
   renderCharts(normalized);
   renderTables(normalized);
   updateScopeContextBanner();
+  if (pendingDrilldownHint) {
+    showActivityHint(pendingDrilldownHint, "activity-hint--ok", 5200);
+    pendingDrilldownHint = null;
+  }
+  if (pendingDrilldownScroll) {
+    pendingDrilldownScroll = false;
+    requestAnimationFrame(() => {
+      document.getElementById("recent-transactions")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
 }
 
 function progressDetailFromJob(job) {
@@ -2167,6 +2303,7 @@ function bindFilters() {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener("change", () => {
+      summaryTextSearch = "";
       if (id === "year-filter") {
         updateCalendarMonthDisabledState();
         updatePeriodNudgeState();

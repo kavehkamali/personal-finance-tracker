@@ -133,11 +133,28 @@ def _is_internal_candidate(description: str, flow_type: str) -> bool:
     text = normalize_text(description).lower()
     if flow_type == "Internal Transfer":
         return True
-    # Phrase-based — avoid bare "payment" / "transfer" (matches retail and app copy).
+    # Point-of-sale / card Interac lines mention "Interac" but are not account-to-account transfers.
+    retail_interac_markers = (
+        "interac purchase",
+        "interac purchase refund",
+        "interac refund",
+        "contactless interac",
+        "interac flash",
+        "visa debit purchase",
+        "debit visa",
+        "debit purchase",
+        "visa purchase",
+        "mastercard purchase",
+    )
+    if any(m in text for m in retail_interac_markers):
+        return False
+    # Phrase-based — avoid bare "interac" (matches retail debit lines) and bare "payment" / "transfer".
     phrases = (
         "e-transfer",
         "etransfer",
-        "interac",
+        "interac e-transfer",
+        "interac e - transfer",
+        "virement interac",
         "bill payment",
         "credit card payment",
         "online banking payment",
