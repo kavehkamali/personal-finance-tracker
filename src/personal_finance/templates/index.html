@@ -22,7 +22,7 @@
         </div>
         <nav class="mint-top-actions" aria-label="Quick actions">
           <a class="mint-link-skip" href="#dash-main">Skip to dashboard</a>
-          <button type="button" class="mint-btn mint-btn-ghost mint-btn--sm" id="reload-dashboard-btn" title="Re-parse statements and refresh figures">
+          <button type="button" class="mint-btn mint-btn-ghost mint-btn--sm" id="reload-dashboard-btn" title="Re-run extraction on all statement files (shows progress for each OCR model)">
             Refresh data
           </button>
         </nav>
@@ -42,34 +42,53 @@
         </div>
 
         <div class="dash-sidebar-body" id="dash-sidebar-body">
-          <div class="dash-sidebar-group dash-sidebar-group--scope">
-            <h3 class="dash-sidebar-heading">Scope</h3>
-            <p class="dash-sidebar-hint">Month and dimensions — all charts and tables follow these filters.</p>
+          <div class="dash-sidebar-group dash-sidebar-group--scope sidebar-scope-card">
+            <div class="sidebar-scope-top">
+              <h3 class="dash-sidebar-heading">Scope</h3>
+              <p class="dash-sidebar-hint">Everything on the dashboard follows these filters. Use ‹ › to move by month.</p>
+            </div>
+            <div class="period-toolbar" role="group" aria-label="Period">
+              <button type="button" class="period-nudge" id="period-prev-month" title="Previous month" aria-label="Previous month">
+                ‹
+              </button>
+              <div class="period-toolbar-fields">
+                <label class="sidebar-field sidebar-field--tight">
+                  <span class="sidebar-field-label">Year</span>
+                  <select id="year-filter" class="sidebar-select" aria-label="Filter by calendar year"></select>
+                </label>
+                <label class="sidebar-field sidebar-field--tight">
+                  <span class="sidebar-field-label">Month</span>
+                  <select id="calendar-month-filter" class="sidebar-select" aria-label="Filter by calendar month" disabled></select>
+                </label>
+              </div>
+              <button type="button" class="period-nudge" id="period-next-month" title="Next month" aria-label="Next month">
+                ›
+              </button>
+            </div>
             <div class="sidebar-filters">
-              <label class="sidebar-field">
-                <span class="sidebar-field-label">Month</span>
-                <select id="month-filter" class="sidebar-select"></select>
-              </label>
-              <label class="sidebar-field">
-                <span class="sidebar-field-label">Owner</span>
-                <select id="owner-filter" class="sidebar-select"></select>
-              </label>
-              <label class="sidebar-field">
-                <span class="sidebar-field-label">Account</span>
-                <select id="account-filter" class="sidebar-select"></select>
-              </label>
-              <label class="sidebar-field">
-                <span class="sidebar-field-label">Category</span>
-                <select id="category-filter" class="sidebar-select"></select>
-              </label>
-              <label class="sidebar-field">
-                <span class="sidebar-field-label">Need level</span>
-                <select id="necessity-filter" class="sidebar-select"></select>
-              </label>
-              <label class="sidebar-field">
-                <span class="sidebar-field-label">Beneficiary</span>
-                <select id="beneficiary-filter" class="sidebar-select"></select>
-              </label>
+              <p class="sidebar-filters-label">Slice by dimension</p>
+              <div class="sidebar-filter-grid">
+                <label class="sidebar-field">
+                  <span class="sidebar-field-label">Owner</span>
+                  <select id="owner-filter" class="sidebar-select"></select>
+                </label>
+                <label class="sidebar-field">
+                  <span class="sidebar-field-label">Account</span>
+                  <select id="account-filter" class="sidebar-select"></select>
+                </label>
+                <label class="sidebar-field">
+                  <span class="sidebar-field-label">Category</span>
+                  <select id="category-filter" class="sidebar-select"></select>
+                </label>
+                <label class="sidebar-field">
+                  <span class="sidebar-field-label">Need level</span>
+                  <select id="necessity-filter" class="sidebar-select"></select>
+                </label>
+                <label class="sidebar-field sidebar-field--full">
+                  <span class="sidebar-field-label">Beneficiary</span>
+                  <select id="beneficiary-filter" class="sidebar-select"></select>
+                </label>
+              </div>
               <label class="sidebar-switch">
                 <input id="internal-toggle" type="checkbox" />
                 <span class="sidebar-switch-ui" aria-hidden="true"></span>
@@ -78,9 +97,9 @@
             </div>
           </div>
 
-          <div class="dash-sidebar-group">
+          <div class="dash-sidebar-group sidebar-exclude-card">
             <h3 class="dash-sidebar-heading">Hide from totals</h3>
-            <p class="dash-sidebar-hint">Checked categories, need levels, or people are removed from aggregates (not from raw statements).</p>
+            <p class="dash-sidebar-hint">Check a row to exclude it from totals and charts (raw statements are unchanged).</p>
             <details class="exclude-details" open>
               <summary class="exclude-details-summary">Categories</summary>
               <div id="exclude-categories-list" class="exclude-scroll" aria-label="Exclude categories"></div>
@@ -140,6 +159,33 @@
               <button type="button" id="browse-button" class="mint-btn mint-btn-primary mint-btn--sm">Choose files</button>
             </div>
           </form>
+          <div class="upload-side-actions">
+            <button
+              type="button"
+              id="clear-cache-btn"
+              class="mint-btn mint-btn--ghost mint-btn--sm"
+              title="Remove cached uploads, MinerU OCR output, and processed transactions (not input_statements or rules)"
+            >
+              Clear cache
+            </button>
+          </div>
+        </div>
+
+        <div class="extraction-preset-block" id="extraction-preset-block" aria-label="Extraction speed">
+          <span class="extraction-preset-label">Extraction</span>
+          <div class="extraction-preset-options" role="radiogroup" aria-label="Model preset">
+            <label class="extraction-preset-opt">
+              <input type="radio" name="extraction-preset" value="fast" />
+              <span class="extraction-preset-title">Fast</span>
+              <span class="extraction-preset-sub">Embedded text first; MinerU pipeline only if that finds no rows (not your multi-VLM list)</span>
+            </label>
+            <label class="extraction-preset-opt">
+              <input type="radio" name="extraction-preset" value="slow" checked />
+              <span class="extraction-preset-title">Slow (full)</span>
+              <span class="extraction-preset-sub">Every model in PF_OCR_BACKENDS, always when OCR runs</span>
+            </label>
+          </div>
+          <p class="extraction-preset-hint" id="extraction-preset-hint"></p>
         </div>
 
         <div id="upload-progress-wrap" class="upload-progress-wrap" hidden>
@@ -147,6 +193,7 @@
             <span id="upload-progress-text" class="upload-progress-text">Processing…</span>
             <span id="upload-progress-pct" class="upload-progress-pct"></span>
           </div>
+          <p id="upload-progress-detail" class="upload-progress-detail" hidden></p>
           <div class="progress-track progress-track--thin">
             <div id="progress-fill" class="progress-fill"></div>
           </div>
@@ -171,14 +218,15 @@
       <section class="section-block" data-dash-section="trends">
         <div class="section-heading mint-section-head">
           <h2 class="mint-section-title">Insights &amp; charts</h2>
-          <p class="mint-section-lead">Mix of trend, part-to-whole, hierarchy, and flow views — toggle panels from the workspace sidebar.</p>
+          <p class="mint-section-lead">Drag ⋮⋮ on a card to reorder; × hides it (turn it back on under Visible panels). Scope below mirrors the sidebar.</p>
+          <div id="dash-scope-live" class="dash-scope-banner" role="status" aria-live="polite" hidden></div>
         </div>
 
-        <section class="chart-grid">
+        <section class="chart-grid" id="chart-grid">
           <article class="card card-hero mint-card mint-card--hero" data-dash-panel="chart-monthly">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Monthly spend trend</h3>
-              <p class="mint-card-desc">Area + points — use <strong>Month</strong> in the sidebar to focus one period.</p>
+              <p class="mint-card-desc">Area + points — pick a <strong>year</strong> and <strong>month</strong> in the sidebar for daily detail.</p>
             </div>
             <div id="monthly-chart" class="chart"></div>
           </article>
@@ -240,6 +288,7 @@
           <article class="card card-wide mint-card" data-dash-panel="chart-necessity-monthly">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Need level by month</h3>
+              <p class="mint-card-desc">One month selected → horizontal bars for that month.</p>
             </div>
             <div id="necessity-monthly-chart" class="chart"></div>
           </article>
@@ -247,6 +296,7 @@
           <article class="card card-wide mint-card" data-dash-panel="chart-beneficiary-monthly">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Beneficiary over time</h3>
+              <p class="mint-card-desc">One month selected → bars per beneficiary for that month.</p>
             </div>
             <div id="beneficiary-monthly-chart" class="chart"></div>
           </article>
@@ -276,6 +326,7 @@
           <article class="card card-wide mint-card" data-dash-panel="chart-stacked">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Category trends</h3>
+              <p class="mint-card-desc">Stacked over months, or ranked categories when a single month is in scope.</p>
             </div>
             <div id="stacked-chart" class="chart"></div>
           </article>

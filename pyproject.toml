@@ -20,9 +20,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# MinerU base wheel does not install VLM/pipeline engines; extras are required for local OCR.
+# mlx enables vlm-mlx-engine on Apple Silicon (skipped on non-mac by optional resolution).
 ocr = [
   "loguru>=0.7.3",
-  "mineru>=2.1.9",
+  "mineru[pipeline,vlm]>=3.0.0,<4",
+  "mineru[mlx]>=3.0.0,<4; sys_platform == 'darwin'",
 ]
 
 [tool.hatch.build.targets.wheel]

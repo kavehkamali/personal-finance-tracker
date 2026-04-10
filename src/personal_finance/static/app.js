@@ -42,6 +42,9 @@ const state = {
   ruleConfig: null,
   currentJobId: null,
   pollHandle: null,
+  /** "extract" after upload, or "reload" from header — controls completion UI */
+  processJobContext: null,
+  pendingSavedFileCount: 0,
   rulesToolbar: {
     search: "",
     filterCategory: "",
@@ -51,6 +54,10 @@ const state = {
 };
 
 const EXCLUDE_STORAGE_KEY = "pf-exclude-v1";
+const EXTRACTION_PRESET_STORAGE_KEY = "pf-extraction-preset-v1";
+const DASH_CHART_ORDER_KEY = "pf-chart-order-v1";
+
+let dashboardDebouncer = null;
 
 function defaultExcludeState() {
   return { categories: [], necessities: [], beneficiaries: [] };
@@ -202,21 +209,27 @@ function hideActivityHint() {
   }
 }
 
-function setProgressVisual(visible, progress, text, pctText) {
+function setProgressVisual(visible, progress, text, pctText, detailText) {
   const wrap = document.getElementById("upload-progress-wrap");
   const fill = document.getElementById("progress-fill");
   const label = document.getElementById("upload-progress-text");
   const pct = document.getElementById("upload-progress-pct");
+  const detailEl = document.getElementById("upload-progress-detail");
   if (!wrap || !fill) return;
   wrap.hidden = !visible;
   const w = visible ? Math.max(0, Math.min(100, (progress || 0) * 100)) : 0;
   fill.style.width = `${w}%`;
   if (label && text != null) label.textContent = text;
   if (pct) pct.textContent = visible && pctText != null && pctText !== "" ? pctText : "";
+  if (detailEl) {
+    const d = detailText != null && String(detailText).trim() !== "" ? String(detailText).trim() : "";
+    detailEl.textContent = d;
+    detailEl.hidden = !visible || !d;
+  }
 }
 
 function resetUploadProgress() {
-  setProgressVisual(false, 0, "Processing…", "");
+  setProgressVisual(false, 0, "Processing…", "", "");
 }
 
 function renderUploadQueued(fileCount) {
@@ -228,9 +241,32 @@ function renderUploadQueued(fileCount) {
       <span class="upload-ic-wrap">${ICON_UPLOAD}</span>
       <div>
         <div class="upload-report-head" style="margin-bottom:2px">
-          <strong>${fileCount} file${fileCount === 1 ? "" : "s"} received</strong>
+          <strong>${fileCount} file${fileCount === 1 ? "" : "s"} selected</strong>
         </div>
-        <p class="upload-feedback-sub">Saving and parsing…</p>
+        <p class="upload-feedback-sub">Uploading to your machine…</p>
+      </div>
+    </div>
+  `;
+}
+
+function renderUploadSavedAwaitingExtract(savedNames) {
+  const fb = document.getElementById("upload-feedback");
+  if (!fb) return;
+  const n = savedNames.length;
+  const list =
+    n <= 3
+      ? savedNames.map((s) => escapeHtml(s)).join(", ")
+      : `${n} files (e.g. ${escapeHtml(savedNames[0])}…)`;
+  fb.hidden = false;
+  fb.innerHTML = `
+    <div class="upload-feedback-inner upload-feedback--queued">
+      <span class="upload-ic-wrap">${ICON_UPLOAD}</span>
+      <div style="flex:1;min-width:0">
+        <div class="upload-report-head" style="margin-bottom:2px">
+          <strong>Saved locally</strong>
+        </div>
+        <p class="upload-feedback-sub">${escapeHtml(String(n))} file${n === 1 ? "" : "s"}: ${list}. Choose <strong>Fast</strong> or <strong>Slow (full)</strong> above, then extract — the bar shows each model as it runs.</p>
+        <button type="button" class="mint-btn mint-btn-primary mint-btn--sm upload-process-btn" data-action="process-statements">Extract transactions</button>
       </div>
     </div>
   `;
@@ -291,6 +327,172 @@ function filterValue(id) {
   return document.getElementById(id)?.value || "";
 }
 
+/** Calendar month dropdown values (match API month key YYYY-MM). */
+const CAL_MONTH_OPTIONS = [
+  ["01", "January"],
+  ["02", "February"],
+  ["03", "March"],
+  ["04", "April"],
+  ["05", "May"],
+  ["06", "June"],
+  ["07", "July"],
+  ["08", "August"],
+  ["09", "September"],
+  ["10", "October"],
+  ["11", "November"],
+  ["12", "December"],
+];
+
+function updateCalendarMonthDisabledState() {
+  const yearEl = document.getElementById("year-filter");
+  const calEl = document.getElementById("calendar-month-filter");
+  if (!yearEl || !calEl) return;
+  const hasYear = Boolean(yearEl.value);
+  calEl.disabled = !hasYear;
+  if (!hasYear) calEl.value = "";
+}
+
+let periodUrlApplied = false;
+
+/** Apply ?month=YYYY-MM or ?year=YYYY once after period dropdowns exist. Returns true if URL changed scope (caller may refetch). */
+function applyPeriodSelectionFromUrlOnce() {
+  if (periodUrlApplied) return false;
+  periodUrlApplied = true;
+  const p = new URLSearchParams(window.location.search);
+  const ym = p.get("month");
+  const yr = p.get("year");
+  const yearEl = document.getElementById("year-filter");
+  const calEl = document.getElementById("calendar-month-filter");
+  if (!yearEl || !calEl) return false;
+  let changed = false;
+  if (ym && /^\d{4}-\d{2}$/.test(ym)) {
+    const [y, m] = ym.split("-");
+    const mm = m.length === 1 ? `0${m}` : m.slice(0, 2);
+    if ([...yearEl.options].some((o) => o.value === y)) {
+      yearEl.value = y;
+      changed = true;
+    }
+    updateCalendarMonthDisabledState();
+    if ([...calEl.options].some((o) => o.value === mm)) {
+      calEl.value = mm;
+      changed = true;
+    }
+  } else if (yr && /^\d{4}$/.test(yr)) {
+    if ([...yearEl.options].some((o) => o.value === yr)) {
+      yearEl.value = yr;
+      calEl.value = "";
+      changed = true;
+    }
+  }
+  updateCalendarMonthDisabledState();
+  return changed;
+}
+
+function populatePeriodFilters(summary) {
+  const yearEl = document.getElementById("year-filter");
+  const calEl = document.getElementById("calendar-month-filter");
+  if (!yearEl || !calEl) return;
+  const monthKeys = summary.filters?.months || [];
+  const years = [
+    ...new Set(monthKeys.map((k) => String(k).slice(0, 4)).filter((y) => /^\d{4}$/.test(y))),
+  ].sort((a, b) => b.localeCompare(a));
+  const prevY = yearEl.value;
+  const prevM = calEl.value;
+  yearEl.innerHTML = [`<option value="">All years</option>`, ...years.map((y) => optionMarkup(y, prevY, y))].join("");
+  calEl.innerHTML = [
+    `<option value="">All months</option>`,
+    ...CAL_MONTH_OPTIONS.map(([val, lab]) => optionMarkup(val, prevM, lab)),
+  ].join("");
+  if (years.includes(prevY)) yearEl.value = prevY;
+  else yearEl.value = "";
+  const mOk = prevM && CAL_MONTH_OPTIONS.some(([v]) => v === prevM);
+  if (yearEl.value && mOk) calEl.value = prevM;
+  else if (!yearEl.value) calEl.value = "";
+  updateCalendarMonthDisabledState();
+  updatePeriodNudgeState();
+}
+
+function updatePeriodNudgeState() {
+  const prev = document.getElementById("period-prev-month");
+  const next = document.getElementById("period-next-month");
+  const yearEl = document.getElementById("year-filter");
+  const calEl = document.getElementById("calendar-month-filter");
+  const on = Boolean(yearEl?.value && calEl && !calEl.disabled && calEl.value);
+  if (prev) prev.disabled = !on;
+  if (next) next.disabled = !on;
+}
+
+/** Debounced refresh so rapid filter changes (e.g. month compare) hit the API once. */
+function scheduleDashboardRefresh() {
+  if (dashboardDebouncer) clearTimeout(dashboardDebouncer);
+  dashboardDebouncer = setTimeout(() => {
+    dashboardDebouncer = null;
+    loadDashboard().catch((err) => showErrorBanner(err.message));
+  }, 260);
+}
+
+function shiftCalendarMonth(delta) {
+  const yearEl = document.getElementById("year-filter");
+  const calEl = document.getElementById("calendar-month-filter");
+  if (!yearEl?.value || !calEl?.value || calEl.disabled) return;
+  const y = parseInt(yearEl.value, 10);
+  const m = parseInt(calEl.value, 10) - 1;
+  const d = new Date(Date.UTC(y, m + delta, 1));
+  const ny = d.getUTCFullYear();
+  const nm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const years = [...yearEl.options].map((o) => o.value).filter(Boolean);
+  if (!years.includes(String(ny))) {
+    showActivityHint("No data for that year in the list — choose another year first.", "", 3800);
+    return;
+  }
+  yearEl.value = String(ny);
+  updateCalendarMonthDisabledState();
+  calEl.value = nm;
+  updatePeriodNudgeState();
+  scheduleDashboardRefresh();
+}
+
+function buildScopeDescription() {
+  const parts = [];
+  const y = filterValue("year-filter");
+  const cm = filterValue("calendar-month-filter");
+  if (y && cm) {
+    const lab = CAL_MONTH_OPTIONS.find(([v]) => v === cm)?.[1] || cm;
+    parts.push(`${lab} ${y}`);
+  } else if (y) {
+    parts.push(`Year ${y} · all months`);
+  } else {
+    parts.push("All dates in your data");
+  }
+  const dims = [
+    ["owner-filter", "Owner"],
+    ["account-filter", "Account"],
+    ["category-filter", "Category"],
+    ["necessity-filter", "Need"],
+    ["beneficiary-filter", "Beneficiary"],
+  ];
+  dims.forEach(([id, label]) => {
+    const v = filterValue(id);
+    if (v) parts.push(`${label}: ${v}`);
+  });
+  if (document.getElementById("internal-toggle")?.checked) {
+    parts.push("Internal transfers included in spend charts");
+  }
+  const exParts = [];
+  if (excludeState.categories.length) exParts.push(`${excludeState.categories.length} categories`);
+  if (excludeState.necessities.length) exParts.push(`${excludeState.necessities.length} need levels`);
+  if (excludeState.beneficiaries.length) exParts.push(`${excludeState.beneficiaries.length} beneficiaries`);
+  if (exParts.length) parts.push(`Hidden from totals: ${exParts.join(", ")}`);
+  return parts.join(" · ");
+}
+
+function updateScopeContextBanner() {
+  const el = document.getElementById("dash-scope-live");
+  if (!el) return;
+  el.textContent = buildScopeDescription();
+  el.hidden = false;
+}
+
 function currentQueryParams() {
   const params = new URLSearchParams();
   const mapping = [
@@ -306,10 +508,17 @@ function currentQueryParams() {
     if (value) params.set(key, value);
   });
 
-  const monthVal = filterValue("month-filter");
-  if (monthVal) params.set("month", monthVal);
+  const y = filterValue("year-filter");
+  const cm = filterValue("calendar-month-filter");
+  if (y && cm) {
+    const mm = cm.length === 1 ? `0${cm}` : cm;
+    params.set("month", `${y}-${mm}`);
+  } else if (y) {
+    params.set("year", y);
+  }
 
-  if (document.getElementById("internal-toggle").checked) {
+  const intToggle = document.getElementById("internal-toggle");
+  if (intToggle && intToggle.checked) {
     params.set("include_internal", "true");
   }
 
@@ -320,9 +529,9 @@ function currentQueryParams() {
   return params;
 }
 
+/** @returns {boolean} true if URL forced a new scope and caller should refetch summary once */
 function populateFilters(summary) {
   const configs = [
-    ["month-filter", "months", "All months"],
     ["owner-filter", "owners", "All owners"],
     ["account-filter", "accounts", "All accounts"],
     ["category-filter", "categories", "All categories"],
@@ -332,10 +541,14 @@ function populateFilters(summary) {
 
   configs.forEach(([id, key, label]) => {
     const select = document.getElementById(id);
+    if (!select) return;
     const currentValue = select.value;
-    select.innerHTML = [`<option value="">${label}</option>`, ...summary.filters[key].map((item) => optionMarkup(item, currentValue))].join("");
+    const items = summary.filters[key] || [];
+    select.innerHTML = [`<option value="">${label}</option>`, ...items.map((item) => optionMarkup(item, currentValue))].join("");
   });
+  populatePeriodFilters(summary);
   renderExcludeLists(summary);
+  return applyPeriodSelectionFromUrlOnce();
 }
 
 function renderExcludeLists(summary) {
@@ -477,6 +690,38 @@ function renderOverview(summary) {
   const monthlyVals = summary.monthly_expenses.map((r) => Number(r.value || 0));
   const spark = sparklineSvg(monthlyVals.slice(-10));
 
+  const eq = overview.extraction_quality || {};
+  const modeRaw = String(eq.mode || "when_empty").toLowerCase();
+  const modeText =
+    modeRaw === "always"
+      ? "Multi-model on every PDF — results merged for accuracy"
+      : modeRaw === "never"
+        ? "Optional OCR only when you enable backends"
+        : "Multi-model when embedded PDF text returns no rows";
+  const backends = Array.isArray(eq.backends) ? eq.backends.filter(Boolean) : [];
+  const backendsStr = backends.length ? backends.join(" · ") : "Native text only (install MinerU + ocr extra for VLM pipeline)";
+  const conf =
+    eq.avg_confidence != null && !Number.isNaN(Number(eq.avg_confidence)) ? Math.round(Number(eq.avg_confidence) * 100) : null;
+  const extractionStrip = `
+    <article class="metric metric--extraction" aria-label="Statement extraction consensus">
+      <div class="extraction-strip">
+        <div class="extraction-strip-head">
+          <span class="extraction-strip-title">Statement extraction &amp; model consensus</span>
+          <span class="extraction-strip-mode">${escapeHtml(modeText)}</span>
+        </div>
+        <div class="extraction-strip-stats">
+          <div class="extraction-strip-stat"><span class="es-k">OCR backends</span><span class="es-v es-v--wrap">${escapeHtml(backendsStr)}</span></div>
+          <div class="extraction-strip-stat"><span class="es-k">Avg agreement</span><span class="es-v">${conf != null ? `${conf}%` : "—"}</span></div>
+          <div class="extraction-strip-stat"><span class="es-k">Files merged</span><span class="es-v">${Number(eq.files_with_consensus_merge ?? 0)}</span></div>
+          <div class="extraction-strip-stat"><span class="es-k">Low-confidence rows</span><span class="es-v es-v--warn">${Number(eq.low_confidence_transactions ?? 0)}</span></div>
+          <div class="extraction-strip-stat"><span class="es-k">Description disagreements</span><span class="es-v">${Number(eq.description_disagreements ?? 0)}</span></div>
+          <div class="extraction-strip-stat"><span class="es-k">Statements in report</span><span class="es-v">${Number(eq.files_analyzed ?? 0)}</span></div>
+        </div>
+        <p class="extraction-strip-foot">Parallel parses are aligned on date, amount, and a normalized description fingerprint; the merged row keeps the majority description (longest tie-break). On Apple Silicon, <span class="es-code">vlm-mlx-engine</span> runs a local MLX VLM (no cloud). Tune with <span class="es-code">PF_OCR_ENSEMBLE</span> and <span class="es-code">PF_OCR_BACKENDS</span>; see README “VLMs on Mac”.</p>
+      </div>
+    </article>
+  `;
+
   const avgTx = overview.avg_expense_transaction ?? 0;
   const heroSubtitle =
     topCat && topCatAmt != null
@@ -513,7 +758,7 @@ function renderOverview(summary) {
     )
     .join("");
 
-  document.getElementById("overview-cards").innerHTML = hero + rest;
+  document.getElementById("overview-cards").innerHTML = extractionStrip + hero + rest;
 }
 
 function baseLayout(extra = {}) {
@@ -1562,6 +1807,7 @@ async function saveRules() {
   renderOverview(normalized);
   renderCharts(normalized);
   renderTables(normalized);
+  updateScopeContextBanner();
   renderRulesTable();
   showActivityHint("Rules saved — dataset rebuilt.", "activity-hint--ok");
 }
@@ -1577,50 +1823,117 @@ async function fetchSummary() {
 async function loadDashboard() {
   hideErrorBanner();
   hideActivityHint();
-  const summary = await fetchSummary();
-  const normalized = normalizeSummary(summary);
+  let summary = await fetchSummary();
+  let normalized = normalizeSummary(summary);
   state.summary = normalized;
-  populateFilters(normalized);
+  let urlScoped = populateFilters(normalized);
+  if (urlScoped) {
+    summary = await fetchSummary();
+    normalized = normalizeSummary(summary);
+    state.summary = normalized;
+    populateFilters(normalized);
+  }
   renderOverview(normalized);
   renderCharts(normalized);
   renderTables(normalized);
+  updateScopeContextBanner();
+}
+
+function progressDetailFromJob(job) {
+  if (!job) return "";
+  const parts = [];
+  if (job.current_file) parts.push(job.current_file);
+  if (job.ocr_backend != null && job.ocr_backend_index != null && job.ocr_backends_total != null) {
+    parts.push(`Model ${job.ocr_backend_index}/${job.ocr_backends_total}: ${job.ocr_backend}`);
+  }
+  return parts.join(" · ");
+}
+
+/** Stop polling; jobs live in server memory and vanish on restart — avoid infinite 404s. */
+function stopJobPolling(message) {
+  if (state.pollHandle) {
+    clearInterval(state.pollHandle);
+    state.pollHandle = null;
+  }
+  state.currentJobId = null;
+  state.processJobContext = null;
+  resetUploadProgress();
+  if (message) showErrorBanner(message);
 }
 
 async function pollJob(jobId) {
   const response = await fetch(`/api/jobs/${jobId}`);
+  if (response.status === 404) {
+    stopJobPolling(
+      "That upload/extraction job is no longer on the server (usually after the app restarted). Run upload or extraction again.",
+    );
+    return;
+  }
   if (!response.ok) {
     throw new Error("Unable to read job status.");
   }
 
   const job = await response.json();
   const pct = `${Math.round((job.progress || 0) * 100)}%`;
-  setProgressVisual(true, job.progress || 0, "Processing statements…", pct);
+  const headline =
+    job.kind === "upload"
+      ? job.stage === "saving"
+        ? "Uploading…"
+        : "Upload complete"
+      : job.message && String(job.message).trim()
+        ? String(job.message)
+        : "Extracting statements…";
+  setProgressVisual(true, job.progress || 0, headline, pct, progressDetailFromJob(job));
 
   if (job.status === "complete") {
-    clearInterval(state.pollHandle);
-    state.pollHandle = null;
-    state.currentJobId = null;
-    const savedFiles = job.result && Array.isArray(job.result.saved_files) ? job.result.saved_files : [];
-    const n = savedFiles.length;
-    resetUploadProgress();
-    try {
-      await loadDashboard();
-      await loadRules();
-      if (state.summary && n > 0) {
-        renderUploadComplete(n, state.summary);
-      }
-      hideErrorBanner();
-    } catch (err) {
-      showErrorBanner(err.message || "Could not refresh dashboard after upload.");
+    if (state.pollHandle) {
+      clearInterval(state.pollHandle);
+      state.pollHandle = null;
     }
+    state.currentJobId = null;
+
+    if (job.kind === "upload" && job.result && job.result.upload_only) {
+      const savedFiles = Array.isArray(job.result.saved_files) ? job.result.saved_files : [];
+      state.pendingSavedFileCount = savedFiles.length;
+      resetUploadProgress();
+      try {
+        await loadDashboard();
+        await loadRules();
+        renderUploadSavedAwaitingExtract(savedFiles);
+        hideErrorBanner();
+      } catch (err) {
+        showErrorBanner(err.message || "Could not refresh after upload.");
+      }
+      return;
+    }
+
+    if (job.kind === "process") {
+      const ctx = state.processJobContext;
+      state.processJobContext = null;
+      resetUploadProgress();
+      try {
+        await loadDashboard();
+        await loadRules();
+        if (ctx === "reload") {
+          showActivityHint("Dataset rebuilt from your statement files.", "activity-hint--ok");
+        } else {
+          const n = state.pendingSavedFileCount || 1;
+          state.pendingSavedFileCount = 0;
+          if (state.summary) renderUploadComplete(n, state.summary);
+        }
+        hideErrorBanner();
+      } catch (err) {
+        showErrorBanner(err.message || "Could not refresh dashboard after extraction.");
+      }
+      return;
+    }
+
+    resetUploadProgress();
     return;
   }
 
   if (job.status === "error") {
-    clearInterval(state.pollHandle);
-    state.pollHandle = null;
-    state.currentJobId = null;
-    resetUploadProgress();
+    stopJobPolling(null);
     showErrorBanner(job.error || "Processing failed.");
     return;
   }
@@ -1629,10 +1942,98 @@ async function pollJob(jobId) {
 function startPolling(jobId) {
   if (state.pollHandle) clearInterval(state.pollHandle);
   state.currentJobId = jobId;
+  const onPollError = (error) => {
+    stopJobPolling(error.message || "Job polling failed.");
+  };
   state.pollHandle = setInterval(() => {
-    pollJob(jobId).catch((error) => showErrorBanner(error.message));
-  }, 800);
-  pollJob(jobId).catch((error) => showErrorBanner(error.message));
+    pollJob(jobId).catch(onPollError);
+  }, 600);
+  pollJob(jobId).catch(onPollError);
+}
+
+function restoreExtractionPresetFromStorage() {
+  try {
+    const v = localStorage.getItem(EXTRACTION_PRESET_STORAGE_KEY);
+    if (v !== "fast" && v !== "slow") return;
+    const input = document.querySelector(`input[name="extraction-preset"][value="${v}"]`);
+    if (input) input.checked = true;
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function bindExtractionPresetPersistence() {
+  document.getElementById("extraction-preset-block")?.addEventListener("change", (ev) => {
+    const t = ev.target;
+    if (!(t instanceof HTMLInputElement)) return;
+    if (t.name !== "extraction-preset" || !t.value) return;
+    try {
+      localStorage.setItem(EXTRACTION_PRESET_STORAGE_KEY, t.value);
+    } catch (_) {
+      /* ignore */
+    }
+  });
+}
+
+function selectedExtractionPreset() {
+  const el = document.querySelector('input[name="extraction-preset"]:checked');
+  if (el && el.value) return el.value;
+  try {
+    const v = localStorage.getItem(EXTRACTION_PRESET_STORAGE_KEY);
+    if (v === "fast" || v === "slow") return v;
+  } catch (_) {
+    /* ignore */
+  }
+  return "slow";
+}
+
+async function loadExtractionOptions() {
+  const hint = document.getElementById("extraction-preset-hint");
+  try {
+    const response = await fetch("/api/extraction-options");
+    if (!response.ok || !hint) return;
+    const data = await response.json();
+    const f = data.presets && data.presets.fast;
+    const s = data.presets && data.presets.slow;
+    if (!f || !s) return;
+    const fList = Array.isArray(f.backends) ? f.backends.join(" + ") : "pipeline";
+    const sList = Array.isArray(s.backends) ? s.backends.join(" + ") : "";
+    hint.textContent = `Fast → only ${fList} (${f.ensemble_mode}), not your multi-model env list. Slow → ${sList || "(env)"} (${s.ensemble_mode}) from PF_OCR_BACKENDS.`;
+  } catch {
+    if (hint) hint.textContent = "";
+  }
+}
+
+async function startProcessJob(context = "extract", endpoint = "/api/process-statements") {
+  hideErrorBanner();
+  hideActivityHint();
+  state.processJobContext = context;
+  setProgressVisual(true, 0.04, "Starting extraction…", "4%", "");
+  const preset = selectedExtractionPreset();
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ preset }),
+  });
+  if (!response.ok) {
+    state.processJobContext = null;
+    resetUploadProgress();
+    let detail = context === "reload" ? "Reload failed." : "Could not start extraction.";
+    try {
+      const errBody = await response.json();
+      if (errBody.detail) detail = String(errBody.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  const payload = await response.json();
+  if (!payload.job_id) {
+    state.processJobContext = null;
+    resetUploadProgress();
+    throw new Error("Invalid server response.");
+  }
+  startPolling(payload.job_id);
 }
 
 async function uploadFiles(files) {
@@ -1658,10 +2059,63 @@ async function uploadFiles(files) {
   startPolling(payload.job_id);
 }
 
+function bindUploadFeedbackActions() {
+  document.getElementById("upload-feedback")?.addEventListener("click", (event) => {
+    const btn = event.target && event.target.closest && event.target.closest("[data-action='process-statements']");
+    if (!btn) return;
+    startProcessJob("extract").catch((err) => showErrorBanner(err.message || "Extraction failed to start"));
+  });
+}
+
+async function clearAppCache() {
+  if (
+    !confirm(
+      "Clear cached uploads, MinerU OCR output, and processed transactions? Files in input_statements and your rules in data/settings are kept.",
+    )
+  ) {
+    return;
+  }
+  const btn = document.getElementById("clear-cache-btn");
+  if (btn) btn.disabled = true;
+  try {
+    const response = await fetch("/api/clear-cache", {
+      method: "POST",
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) {
+      let detail = "Could not clear cache.";
+      try {
+        const body = await response.json();
+        if (body.detail) detail = String(body.detail);
+      } catch {
+        /* ignore */
+      }
+      throw new Error(detail);
+    }
+    const payload = await response.json();
+    const n = Number(payload.cleared_items ?? 0);
+    document.getElementById("upload-feedback")?.setAttribute("hidden", "");
+    hideErrorBanner();
+    await loadDashboard();
+    showActivityHint(
+      n > 0 ? `Cache cleared (${n} top-level item${n === 1 ? "" : "s"} removed).` : "Cache was already empty.",
+      "activity-hint--ok",
+    );
+  } catch (err) {
+    showErrorBanner(err.message || "Could not clear cache.");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 function bindUploader() {
   const dropzone = document.getElementById("upload-form");
   const fileInput = document.getElementById("file-input");
   const browseButton = document.getElementById("browse-button");
+
+  document.getElementById("clear-cache-btn")?.addEventListener("click", () => {
+    clearAppCache().catch((e) => showErrorBanner(e.message || "Clear cache failed."));
+  });
 
   browseButton.addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", async (event) => {
@@ -1700,13 +2154,29 @@ function bindUploader() {
 }
 
 function bindFilters() {
-  ["month-filter", "owner-filter", "account-filter", "category-filter", "necessity-filter", "beneficiary-filter", "internal-toggle"].forEach((id) => {
+  [
+    "year-filter",
+    "calendar-month-filter",
+    "owner-filter",
+    "account-filter",
+    "category-filter",
+    "necessity-filter",
+    "beneficiary-filter",
+    "internal-toggle",
+  ].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener("change", () => {
-      loadDashboard().catch((error) => showErrorBanner(error.message));
+      if (id === "year-filter") {
+        updateCalendarMonthDisabledState();
+        updatePeriodNudgeState();
+      }
+      scheduleDashboardRefresh();
     });
   });
+
+  document.getElementById("period-prev-month")?.addEventListener("click", () => shiftCalendarMonth(-1));
+  document.getElementById("period-next-month")?.addEventListener("click", () => shiftCalendarMonth(1));
 
   const sidebarBody = document.getElementById("dash-sidebar-body");
   if (sidebarBody) {
@@ -1715,20 +2185,18 @@ function bindFilters() {
       if (!(target instanceof HTMLInputElement)) return;
       if (!target.matches('input[data-exclude-group][type="checkbox"]')) return;
       refreshExcludeStateFromDom();
-      loadDashboard().catch((error) => showErrorBanner(error.message));
+      scheduleDashboardRefresh();
     });
   }
+
+  updatePeriodNudgeState();
 }
 
 function bindDashboardExtras() {
   document.getElementById("reload-dashboard-btn")?.addEventListener("click", async () => {
     hideErrorBanner();
     try {
-      const res = await fetch("/api/reload", { method: "POST" });
-      if (!res.ok) throw new Error("Reload failed");
-      await loadDashboard();
-      await loadRules();
-      showActivityHint("Dataset rebuilt from your statement files.", "activity-hint--ok");
+      await startProcessJob("reload", "/api/reload");
     } catch (err) {
       showErrorBanner(err.message || "Reload failed");
     }
@@ -1782,6 +2250,168 @@ function bindRuleActions() {
 
   document.getElementById("save-rules-button").addEventListener("click", () => {
     saveRules().catch((error) => showErrorBanner(error.message));
+  });
+}
+
+/** Matches `index.html` chart-grid article sequence (for layout reset). */
+const CHART_GRID_DEFAULT_ORDER = [
+  "chart-monthly",
+  "chart-category-donut",
+  "chart-necessity",
+  "chart-beneficiary",
+  "chart-treemap",
+  "chart-sankey",
+  "chart-sunburst",
+  "chart-weekday",
+  "chart-necessity-monthly",
+  "chart-beneficiary-monthly",
+  "chart-owner-beneficiary",
+  "chart-category",
+  "chart-flow",
+  "chart-stacked",
+  "chart-waterfall",
+  "chart-owner",
+  "chart-account",
+  "chart-merchant",
+  "chart-daily",
+];
+
+function resetChartGridDomOrder() {
+  const grid = document.getElementById("chart-grid");
+  if (!grid) return;
+  const articles = [...grid.querySelectorAll(":scope > article[data-dash-panel]")];
+  if (!articles.length) return;
+  const byId = new Map(articles.map((el) => [el.getAttribute("data-dash-panel"), el]));
+  const frag = document.createDocumentFragment();
+  CHART_GRID_DEFAULT_ORDER.forEach((id) => {
+    const el = byId.get(id);
+    if (el) frag.appendChild(el);
+  });
+  articles.forEach((el) => {
+    const id = el.getAttribute("data-dash-panel");
+    if (id && !CHART_GRID_DEFAULT_ORDER.includes(id)) frag.appendChild(el);
+  });
+  grid.appendChild(frag);
+}
+
+function restoreChartOrder() {
+  const grid = document.getElementById("chart-grid");
+  if (!grid) return;
+  let order = [];
+  try {
+    order = JSON.parse(localStorage.getItem(DASH_CHART_ORDER_KEY) || "[]");
+  } catch (_) {
+    /* ignore */
+  }
+  if (!Array.isArray(order) || order.length < 2) return;
+  const children = [...grid.querySelectorAll(":scope > article[data-dash-panel]")];
+  if (!children.length) return;
+  const byId = new Map(children.map((el) => [el.getAttribute("data-dash-panel"), el]));
+  const seen = new Set();
+  const frag = document.createDocumentFragment();
+  order.forEach((id) => {
+    const el = byId.get(id);
+    if (el) {
+      frag.appendChild(el);
+      seen.add(id);
+    }
+  });
+  children.forEach((el) => {
+    const id = el.getAttribute("data-dash-panel");
+    if (id && !seen.has(id)) frag.appendChild(el);
+  });
+  grid.appendChild(frag);
+}
+
+function persistChartOrder() {
+  const grid = document.getElementById("chart-grid");
+  if (!grid) return;
+  const ids = [...grid.querySelectorAll(":scope > article[data-dash-panel]")].map((el) => el.getAttribute("data-dash-panel"));
+  try {
+    localStorage.setItem(DASH_CHART_ORDER_KEY, JSON.stringify(ids));
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+let dragChartArticle = null;
+
+function installChartPanelChrome() {
+  const grid = document.getElementById("chart-grid");
+  if (!grid) return;
+  grid.querySelectorAll(":scope > article[data-dash-panel]").forEach((article) => {
+    if (article.querySelector(".panel-chrome")) return;
+    const head = article.querySelector(".mint-card-head");
+    if (!head) return;
+    head.classList.add("mint-card-head--with-tools");
+    if (!head.querySelector(".mint-card-head-text")) {
+      const wrap = document.createElement("div");
+      wrap.className = "mint-card-head-text";
+      while (head.firstChild) {
+        wrap.appendChild(head.firstChild);
+      }
+      head.appendChild(wrap);
+    }
+    const tools = document.createElement("div");
+    tools.className = "panel-chrome";
+    tools.innerHTML =
+      '<button type="button" class="panel-chrome-drag" aria-label="Drag to reorder" title="Drag to reorder">⋮⋮</button>' +
+      '<button type="button" class="panel-chrome-hide" aria-label="Hide chart" title="Hide chart">×</button>';
+    head.appendChild(tools);
+    const dragBtn = tools.querySelector(".panel-chrome-drag");
+    if (dragBtn) dragBtn.draggable = true;
+  });
+}
+
+function bindChartGridChrome() {
+  const grid = document.getElementById("chart-grid");
+  if (!grid || grid.dataset.chromeBound === "1") return;
+  grid.dataset.chromeBound = "1";
+
+  grid.addEventListener("dragstart", (e) => {
+    const grip = e.target.closest(".panel-chrome-drag");
+    if (!grip) return;
+    const article = grip.closest("article[data-dash-panel]");
+    if (!article || !grid.contains(article)) return;
+    dragChartArticle = article;
+    article.classList.add("panel-dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", article.getAttribute("data-dash-panel") || "");
+  });
+
+  grid.addEventListener("dragend", () => {
+    if (dragChartArticle) dragChartArticle.classList.remove("panel-dragging");
+    dragChartArticle = null;
+  });
+
+  grid.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  });
+
+  grid.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const tgt = e.target.closest("article[data-dash-panel]");
+    if (!dragChartArticle || !tgt || !grid.contains(tgt)) return;
+    if (tgt === dragChartArticle) return;
+    const rect = tgt.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    if (before) grid.insertBefore(dragChartArticle, tgt);
+    else grid.insertBefore(dragChartArticle, tgt.nextSibling);
+    persistChartOrder();
+    scheduleDashChartResize();
+  });
+
+  grid.addEventListener("click", (e) => {
+    const btn = e.target.closest(".panel-chrome-hide");
+    if (!btn) return;
+    const article = btn.closest("[data-dash-panel]");
+    const id = article?.getAttribute("data-dash-panel");
+    if (!id) return;
+    dashVisibility[id] = false;
+    persistDashVisibility();
+    syncDashToggleCheckboxes();
+    applyDashPanelVisibility();
   });
 }
 
@@ -1963,6 +2593,9 @@ function applyDashPreset(name) {
 
 function bindDashLayout() {
   loadDashVisibility();
+  restoreChartOrder();
+  installChartPanelChrome();
+  bindChartGridChrome();
   buildDashToggleList();
   applyDashPanelVisibility();
 
@@ -1977,9 +2610,12 @@ function bindDashLayout() {
   if (reset) {
     reset.addEventListener("click", () => {
       localStorage.removeItem(DASH_STORAGE_KEY);
+      localStorage.removeItem(DASH_CHART_ORDER_KEY);
+      resetChartGridDomOrder();
       loadDashVisibility();
       syncDashToggleCheckboxes();
       applyDashPanelVisibility();
+      scheduleDashChartResize();
     });
   }
 
@@ -2000,12 +2636,16 @@ function bindDashLayout() {
 
 window.addEventListener("DOMContentLoaded", async () => {
   bindDashLayout();
+  restoreExtractionPresetFromStorage();
+  bindExtractionPresetPersistence();
   bindUploader();
+  bindUploadFeedbackActions();
   bindFilters();
   bindCategoryReview();
   bindDashboardExtras();
   bindRuleActions();
   resetUploadProgress();
+  loadExtractionOptions();
   try {
     await Promise.all([loadDashboard(), loadRules()]);
     scheduleDashChartResize();

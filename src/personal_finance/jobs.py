@@ -22,6 +22,12 @@ def create_job(kind: str) -> str:
             "current_file": None,
             "processed_files": 0,
             "total_files": 0,
+            "ocr_backend": None,
+            "ocr_backend_index": None,
+            "ocr_backends_total": None,
+            "extraction_preset": None,
+            "extraction_backends": None,
+            "extraction_ensemble_mode": None,
             "result": None,
             "error": None,
         }
@@ -52,6 +58,9 @@ def make_progress_callback(job_id: str) -> Callable[[dict[str, Any]], None]:
             current_file=payload.get("current_file"),
             processed_files=payload.get("processed_files", 0),
             total_files=payload.get("total_files", 0),
+            ocr_backend=payload.get("ocr_backend"),
+            ocr_backend_index=payload.get("ocr_backend_index"),
+            ocr_backends_total=payload.get("ocr_backends_total"),
         )
 
     return callback

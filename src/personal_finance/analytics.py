@@ -44,10 +44,12 @@ def apply_filters(
     necessity: str | None = None,
     beneficiary: str | None = None,
     month: str | None = None,
+    year: int | None = None,
     include_internal: bool = False,
     exclude_categories: list[str] | None = None,
     exclude_necessities: list[str] | None = None,
     exclude_beneficiaries: list[str] | None = None,
+    text_search: str | None = None,
 ) -> pd.DataFrame:
     filtered = df.copy()
     if owner:
@@ -60,6 +62,8 @@ def apply_filters(
         filtered = filtered[filtered["necessity"] == necessity]
     if beneficiary:
         filtered = filtered[filtered["beneficiary"] == beneficiary]
+    if year is not None and "transaction_date" in filtered.columns:
+        filtered = filtered[filtered["transaction_date"].dt.year == int(year)]
     if month:
         filtered = filtered[filtered["month"].astype(str) == str(month)]
     if not include_internal and "is_internal" in filtered.columns:
@@ -73,6 +77,18 @@ def apply_filters(
     ex_b = _clean_list(exclude_beneficiaries)
     if ex_b and "beneficiary" in filtered.columns:
         filtered = filtered[~filtered["beneficiary"].isin(ex_b)]
+    needle = (text_search or "").strip().lower()
+    if needle and not filtered.empty:
+        masks: list[pd.Series] = []
+        for col in ("category", "merchant", "description"):
+            if col in filtered.columns:
+                s = filtered[col].fillna("").astype(str).str.lower()
+                masks.append(s.str.contains(needle, regex=False))
+        if masks:
+            combined = masks[0]
+            for m in masks[1:]:
+                combined = combined | m
+            filtered = filtered[combined]
     return filtered
 
 
@@ -184,10 +200,12 @@ def build_dashboard_payload(
     necessity: str | None = None,
     beneficiary: str | None = None,
     month: str | None = None,
+    year: int | None = None,
     include_internal: bool = False,
     exclude_categories: list[str] | None = None,
     exclude_necessities: list[str] | None = None,
     exclude_beneficiaries: list[str] | None = None,
+    text_search: str | None = None,
 ) -> dict[str, Any]:
     if df.empty:
         return {
@@ -207,6 +225,15 @@ def build_dashboard_payload(
                 "top_category": None,
                 "top_category_amount": 0.0,
                 "avg_expense_transaction": 0.0,
+                "extraction_quality": {
+                    "mode": None,
+                    "backends": [],
+                    "avg_confidence": None,
+                    "low_confidence_transactions": 0,
+                    "description_disagreements": 0,
+                    "files_with_consensus_merge": 0,
+                    "files_analyzed": 0,
+                },
             },
             "filters": {"owners": [], "accounts": [], "categories": [], "months": [], "necessities": [], "beneficiaries": []},
             "monthly_expenses": [],
@@ -258,10 +285,12 @@ def build_dashboard_payload(
         necessity=necessity,
         beneficiary=beneficiary,
         month=month,
+        year=year,
         include_internal=True,
         exclude_categories=exclude_categories,
         exclude_necessities=exclude_necessities,
         exclude_beneficiaries=exclude_beneficiaries,
+        text_search=text_search,
     )
     filtered = apply_filters(
         base,
@@ -271,10 +300,12 @@ def build_dashboard_payload(
         necessity=necessity,
         beneficiary=beneficiary,
         month=month,
+        year=year,
         include_internal=include_internal,
         exclude_categories=exclude_categories,
         exclude_necessities=exclude_necessities,
         exclude_beneficiaries=exclude_beneficiaries,
+        text_search=text_search,
     )
     expense_rows = filtered[filtered["expense_amount"] > 0].copy()
 
@@ -290,6 +321,19 @@ def build_dashboard_payload(
         "date_end": scope["transaction_date"].max().strftime("%Y-%m-%d") if scope["transaction_date"].notna().any() else None,
         "matched_internal_pairs": int(scope.loc[scope["internal_match_status"] == "Matched", "match_id"].nunique()),
         "unmatched_internal_rows": int(scope["internal_match_status"].eq("Unmatched").sum()),
+    }
+
+    ee = meta.get("extraction_ensemble") if isinstance(meta, dict) else None
+    if not isinstance(ee, dict):
+        ee = {}
+    overview["extraction_quality"] = {
+        "mode": ee.get("mode"),
+        "backends": list(ee.get("backends_configured", [])),
+        "avg_confidence": ee.get("avg_confidence_global"),
+        "low_confidence_transactions": int(ee.get("total_low_confidence", 0)),
+        "description_disagreements": int(ee.get("total_disagreement_rows", 0)),
+        "files_with_consensus_merge": int(ee.get("files_with_merge", 0)),
+        "files_analyzed": len(ee.get("files", [])),
     }
 
     filters = {
@@ -444,6 +488,9 @@ def build_dashboard_payload(
         "internal_match_status",
         "tx_key",
         "category_source",
+        "extraction_confidence",
+        "extraction_sources",
+        "extraction_disagreement",
     ]
     recent_present = [c for c in recent_cols if c in filtered.columns]
     recent_transactions = filtered[recent_present].sort_values("transaction_date", ascending=False).head(80)

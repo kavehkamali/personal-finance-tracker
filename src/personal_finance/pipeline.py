@@ -4,7 +4,7 @@ import json
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable, Iterable, cast
 
 import pandas as pd
 
@@ -14,6 +14,7 @@ from personal_finance.merchant_aliases import invalidate_merchant_aliases_cache
 from personal_finance.config import (
     DATA_DIR,
     INPUT_STATEMENTS_DIR,
+    OCR_ENSEMBLE_MODE,
     OCR_OUTPUT_DIR,
     PIPELINE_META_JSON,
     PROCESSED_DIR,
@@ -21,8 +22,10 @@ from personal_finance.config import (
     SUPPORTED_UPLOAD_SUFFIXES,
     TRANSACTIONS_CSV,
     UPLOAD_DIR,
+    ocr_ensemble_backends_list,
 )
-from personal_finance.ocr import ocr_pdf_to_markdown
+from personal_finance.extraction_merge import merge_extraction_dataframes, summarize_extraction_reports
+from personal_finance.ocr import MINERU_AVAILABLE, batch_ensure_pdf_markdown, ocr_pdf_to_markdown
 from personal_finance.parsers.rbc import parse_rbc_markdown
 from personal_finance.parsers.rbc_pdf import parse_rbc_pdf
 
@@ -52,6 +55,32 @@ def ensure_directories() -> None:
     _migrate_legacy_cache_layout()
     for path in (INPUT_STATEMENTS_DIR, UPLOAD_DIR, OCR_OUTPUT_DIR, TRANSACTIONS_CSV.parent, SETTINGS_DIR):
         path.mkdir(parents=True, exist_ok=True)
+
+
+def clear_regenerable_cache() -> dict[str, int]:
+    """
+    Remove everything under ``.cache/uploads``, ``.cache/ocr_output``, and ``.cache/processed``.
+
+    Preserves ``.gitkeep`` placeholders, ``input_statements/``, and ``data/settings`` (rules, overrides).
+    """
+    ensure_directories()
+    invalidate_merchant_aliases_cache()
+    cleared = 0
+    for root in (UPLOAD_DIR, OCR_OUTPUT_DIR, PROCESSED_DIR):
+        if not root.is_dir():
+            continue
+        for child in list(root.iterdir()):
+            if child.name == ".gitkeep":
+                continue
+            try:
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+                cleared += 1
+            except OSError:
+                continue
+    return {"cleared_items": cleared}
 
 
 def discover_statement_files() -> list[Path]:
@@ -378,70 +407,272 @@ def _enrich_transactions(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _write_outputs(df: pd.DataFrame, warnings: list[str], processed_files: list[str]) -> None:
+def _write_outputs(
+    df: pd.DataFrame,
+    warnings: list[str],
+    processed_files: list[str],
+    extraction_ensemble: dict[str, object] | None = None,
+) -> None:
     ensure_directories()
     df.to_csv(TRANSACTIONS_CSV, index=False)
-    PIPELINE_META_JSON.write_text(
-        json.dumps(
-            {
-                "updated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-                "warnings": warnings,
-                "processed_files": processed_files,
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    meta: dict[str, object] = {
+        "updated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "warnings": warnings,
+        "processed_files": processed_files,
+    }
+    if extraction_ensemble is not None:
+        meta["extraction_ensemble"] = extraction_ensemble
+    PIPELINE_META_JSON.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
 
 def rebuild_dataset(
     progress_callback: Callable[[dict[str, object]], None] | None = None,
     source_paths: list[Path] | None = None,
+    ocr_backends: list[str] | None = None,
+    ocr_ensemble_mode: str | None = None,
 ) -> dict[str, object]:
     ensure_directories()
     invalidate_merchant_aliases_cache()
+    eff_backends: list[str] = list(ocr_backends) if ocr_backends is not None else ocr_ensemble_backends_list()
+    eff_mode = (ocr_ensemble_mode or OCR_ENSEMBLE_MODE or "when_empty").strip().lower()
+
+    def run_ocr_ensemble(native_empty: bool) -> bool:
+        if not MINERU_AVAILABLE:
+            return False
+        if eff_mode == "never":
+            return False
+        if eff_mode == "always":
+            return True
+        return native_empty
     warnings: list[str] = []
     frames: list[pd.DataFrame] = []
     processed_files: list[str] = []
+    extraction_reports: list[dict[str, object]] = []
     candidate_sources = source_paths or discover_statement_files()
     total_files = max(len(candidate_sources), 1)
 
-    def emit(stage: str, message: str, progress: float, current_file: str | None = None) -> None:
+    # Never decrease progress (avoids bar jumping backward when OCR phase used lower constants than "Reading").
+    _progress_floor = 0.0
+
+    def emit(
+        stage: str,
+        message: str,
+        progress: float,
+        current_file: str | None = None,
+        *,
+        ocr_backend: str | None = None,
+        ocr_backend_index: int | None = None,
+        ocr_backends_total: int | None = None,
+    ) -> None:
+        nonlocal _progress_floor
         if progress_callback is None:
             return
+        p = max(float(progress), _progress_floor)
+        _progress_floor = p
         progress_callback(
             {
                 "stage": stage,
                 "message": message,
-                "progress": round(progress, 4),
+                "progress": round(p, 4),
                 "current_file": current_file,
                 "processed_files": len(processed_files),
                 "total_files": len(candidate_sources),
+                "ocr_backend": ocr_backend,
+                "ocr_backend_index": ocr_backend_index,
+                "ocr_backends_total": ocr_backends_total,
             }
         )
 
     emit("discovering", "Scanning statement files", 0.02)
 
+    # Monotonic timeline: ingest 0.05→0.24 · OCR 0.26→0.52 · merge PDFs 0.54→0.70 · post 0.72→1.0
+    P_INGEST_LO, P_INGEST_HI = 0.05, 0.24
+    P_OCR_LO, P_OCR_HI = 0.26, 0.52
+    P_MERGE_LO, P_MERGE_HI = 0.54, 0.70
+    P_DEDUPE, P_CATEGORIZE, P_MATCH, P_WRITE = 0.72, 0.78, 0.84, 0.92
+
+    pdf_round: list[dict[str, object]] = []
+
     for index, source_path in enumerate(candidate_sources, start=1):
         try:
+            p_ingest = P_INGEST_LO + (index / total_files) * (P_INGEST_HI - P_INGEST_LO)
             emit(
                 "parsing",
-                f"Parsing {source_path.name}",
-                0.08 + (index / total_files) * 0.5,
+                f"Reading {source_path.name}",
+                p_ingest,
                 source_path.name,
+                ocr_backend=None,
+                ocr_backend_index=None,
+                ocr_backends_total=None,
             )
-            frame = pd.DataFrame()
             if source_path.suffix.lower() == ".pdf":
-                frame = parse_rbc_pdf(source_path)
-                if frame.empty:
+                native_df = parse_rbc_pdf(source_path)
+                native_empty = native_df is None or native_df.empty
+                backends = list(eff_backends) if run_ocr_ensemble(native_empty) else []
+                pdf_round.append(
+                    {
+                        "path": source_path,
+                        "native_df": native_df,
+                        "backends": backends,
+                    }
+                )
+                continue
+
+            emit(
+                "parsing",
+                f"Parsing markdown · {source_path.name}",
+                p_ingest,
+                source_path.name,
+                ocr_backend=None,
+                ocr_backend_index=None,
+                ocr_backends_total=None,
+            )
+            frame = parse_rbc_markdown(source_path)
+            if not frame.empty:
+                extraction_reports.append(
+                    {
+                        "file": source_path.name,
+                        "sources": ["markdown_upload"],
+                        "rows_out": int(len(frame)),
+                        "avg_confidence": 1.0,
+                        "low_confidence_rows": 0,
+                        "disagreement_rows": 0,
+                        "merged": False,
+                    }
+                )
+            if frame.empty:
+                warnings.append(f"No transactions extracted from {source_path.name}")
+                continue
+            frame["ingested_file"] = source_path.name
+            frames.append(frame)
+            processed_files.append(source_path.name)
+        except Exception as exc:  # pragma: no cover - user-facing warning path
+            warnings.append(f"{source_path.name}: {exc}")
+
+    n_pdf = len(pdf_round)
+    need_ocr = sum(1 for x in pdf_round if cast(list[str], x["backends"]))
+    with_native_rows = sum(
+        1
+        for x in pdf_round
+        if (nd := cast(pd.DataFrame | None, x["native_df"])) is not None and not nd.empty
+    )
+    native_empty_no_ocr = sum(
+        1
+        for x in pdf_round
+        if not cast(list[str], x["backends"])
+        and (
+            (nd := cast(pd.DataFrame | None, x["native_df"])) is None or nd.empty
+        )
+    )
+    if n_pdf:
+        if need_ocr:
+            scan_msg = (
+                f"PDF scan done — {with_native_rows} with usable embedded text; "
+                f"{need_ocr} need MinerU OCR (slow step)."
+            )
+        elif native_empty_no_ocr:
+            scan_msg = (
+                f"PDF scan done — {native_empty_no_ocr} PDF(s) have no parsed rows from embedded text "
+                f"and OCR is off or unavailable; {with_native_rows} had rows from text."
+            )
+        else:
+            scan_msg = f"PDF scan done — all {n_pdf} PDF(s) parsed from embedded text; skipping MinerU."
+        emit(
+            "parsing",
+            scan_msg,
+            P_INGEST_HI + 0.01,
+            None,
+            ocr_backend=None,
+            ocr_backend_index=None,
+            ocr_backends_total=None,
+        )
+
+    ocr_jobs: list[tuple[int, str, list[Path]]] = []
+    if pdf_round and MINERU_AVAILABLE:
+        for bi, backend in enumerate(eff_backends, start=1):
+            targets = [cast(Path, x["path"]) for x in pdf_round if backend in cast(list[str], x["backends"])]
+            if targets:
+                ocr_jobs.append((bi, backend, targets))
+
+    n_ocr = len(ocr_jobs)
+    ocr_span = max(P_OCR_HI - P_OCR_LO, 0.001)
+    if ocr_jobs:
+        for si, (bi, backend, targets) in enumerate(ocr_jobs, start=1):
+            ocr_p0 = P_OCR_LO + (si - 0.35) / max(n_ocr, 1) * ocr_span
+            emit(
+                "ocr",
+                (
+                    f"MinerU OCR — {len(targets)} PDF(s) had no rows from embedded text — "
+                    f"model {si}/{n_ocr}: {backend}"
+                ),
+                min(ocr_p0, P_OCR_HI),
+                None,
+                ocr_backend=backend,
+                ocr_backend_index=si,
+                ocr_backends_total=n_ocr,
+            )
+            batch_ensure_pdf_markdown(targets, OCR_OUTPUT_DIR, backend=backend)
+            ocr_p1 = P_OCR_LO + (si / max(n_ocr, 1)) * ocr_span
+            emit(
+                "ocr",
+                f"MinerU finished — model {si}/{n_ocr}: {backend}",
+                ocr_p1,
+                None,
+                ocr_backend=backend,
+                ocr_backend_index=si,
+                ocr_backends_total=n_ocr,
+            )
+    elif need_ocr and not MINERU_AVAILABLE:
+        warnings.append("PDFs need OCR but MinerU is not installed (`uv sync --extra ocr`).")
+
+    n_merge = max(len(pdf_round), 1)
+    merge_span = P_MERGE_HI - P_MERGE_LO
+    for mi, item in enumerate(pdf_round, start=1):
+        source_path = cast(Path, item["path"])
+        native_df = cast(pd.DataFrame | None, item["native_df"])
+        backends = cast(list[str], item["backends"])
+        p_merge = P_MERGE_LO + (mi / n_merge) * merge_span
+        try:
+            parts: list[tuple[str, pd.DataFrame]] = []
+            if native_df is not None and not native_df.empty:
+                parts.append(("native_pdf", native_df))
+
+            if backends:
+                emit(
+                    "parsing",
+                    f"Merging extraction · {source_path.name}",
+                    p_merge,
+                    source_path.name,
+                    ocr_backend=None,
+                    ocr_backend_index=None,
+                    ocr_backends_total=None,
+                )
+                for bi, backend in enumerate(backends, start=1):
                     try:
-                        emit("ocr", f"OCR {source_path.name}", 0.05 + ((index - 1) / total_files) * 0.35, source_path.name)
-                        markdown_path = ocr_pdf_to_markdown(source_path, OCR_OUTPUT_DIR)
-                        frame = parse_rbc_markdown(markdown_path)
-                    except Exception:
-                        frame = pd.DataFrame()
+                        markdown_path = ocr_pdf_to_markdown(source_path, OCR_OUTPUT_DIR, backend=backend)
+                        odf = parse_rbc_markdown(markdown_path)
+                        if odf is not None and not odf.empty:
+                            parts.append((f"ocr_{backend}", odf))
+                    except Exception as ocr_exc:  # pragma: no cover - optional stack
+                        warnings.append(f"{source_path.name} OCR [{backend}]: {ocr_exc}")
             else:
-                frame = parse_rbc_markdown(source_path)
+                if native_df is not None and not native_df.empty:
+                    emit(
+                        "parsing",
+                        f"Using embedded PDF text · {source_path.name}",
+                        p_merge,
+                        source_path.name,
+                        ocr_backend=None,
+                        ocr_backend_index=None,
+                        ocr_backends_total=None,
+                    )
+
+            if not parts:
+                frame = pd.DataFrame()
+            else:
+                frame, file_report = merge_extraction_dataframes(parts, source_path.name)
+                extraction_reports.append(file_report)
+
             if frame.empty:
                 warnings.append(f"No transactions extracted from {source_path.name}")
                 continue
@@ -476,17 +707,22 @@ def rebuild_dataset(
                 "ingested_file",
             ]
         )
-        emit("writing", "Writing empty dataset", 0.95)
-        _write_outputs(empty, warnings, processed_files)
+        emit("writing", "Writing empty dataset", P_WRITE)
+        ensemble_meta = summarize_extraction_reports(
+            extraction_reports,
+            backends_configured=eff_backends,
+            mode=eff_mode,
+        )
+        _write_outputs(empty, warnings, processed_files, extraction_ensemble=ensemble_meta)
         emit("complete", "Finished processing", 1.0)
         return {"warnings": warnings, "processed_files": processed_files}
 
     combined = pd.concat(frames, ignore_index=True)
-    emit("dedupe", "Deduplicating transactions", 0.62)
+    emit("dedupe", "Deduplicating transactions", P_DEDUPE)
     combined = _dedupe_transactions(combined)
-    emit("categorizing", "Applying category rules", 0.74)
+    emit("categorizing", "Applying category rules", P_CATEGORIZE)
     combined = _enrich_transactions(combined)
-    emit("matching", "Reconciling internal transfers", 0.88)
+    emit("matching", "Reconciling internal transfers", P_MATCH)
     combined = _match_internal_transfers(combined)
     combined = _match_internal_transfers_second_pass(combined)
     combined = _apply_internal_labels(combined)
@@ -494,16 +730,19 @@ def rebuild_dataset(
     combined = apply_transaction_overrides(combined)
     combined["expense_amount"] = combined.apply(_expense_amount, axis=1)
     combined = combined.sort_values(["transaction_date", "account_label", "amount"], ascending=[True, True, False])
-    emit("writing", "Writing processed outputs", 0.96)
-    _write_outputs(combined, warnings, processed_files)
+    emit("writing", "Writing processed outputs", P_WRITE)
+    ensemble_meta = summarize_extraction_reports(
+        extraction_reports,
+        backends_configured=eff_backends,
+        mode=eff_mode,
+    )
+    _write_outputs(combined, warnings, processed_files, extraction_ensemble=ensemble_meta)
     emit("complete", "Finished processing", 1.0)
     return {"warnings": warnings, "processed_files": processed_files}
 
 
 def load_transactions() -> pd.DataFrame:
     ensure_directories()
-    if not TRANSACTIONS_CSV.exists():
-        rebuild_dataset()
     if not TRANSACTIONS_CSV.exists():
         return pd.DataFrame()
     df = pd.read_csv(TRANSACTIONS_CSV)
@@ -520,6 +759,12 @@ def load_transactions() -> pd.DataFrame:
             df["tx_key"] = ""
     if "category_source" not in df.columns:
         df["category_source"] = "auto"
+    if "extraction_confidence" not in df.columns:
+        df["extraction_confidence"] = 1.0
+    if "extraction_sources" not in df.columns:
+        df["extraction_sources"] = ""
+    if "extraction_disagreement" not in df.columns:
+        df["extraction_disagreement"] = False
     return df
 
 

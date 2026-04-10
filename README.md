@@ -10,6 +10,8 @@ Local-first household finance dashboard for RBC statements: ingest PDFs or markd
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
+Upload saves PDFs/markdown locally first; pick **Fast** (MinerU `pipeline` only when embedded text yields no rows — ignores `PF_OCR_BACKENDS`) or **Slow (full)** (every backend in `PF_OCR_BACKENDS`, mode `always`). **Refresh data** uses the same preset (stored in the browser).
+
 Equivalent: `scripts/dev.sh run`
 
 ## Where things live
@@ -40,7 +42,39 @@ Same as `scripts/dev.sh clean …`.
 
 - **Backend:** FastAPI  
 - **Frontend:** Jinja + vanilla JS + Plotly  
-- **Env:** `uv` (optional OCR extra: MinerU)
+- **Env:** `uv` (optional OCR extra: MinerU 3 with `pipeline` + `vlm`; on macOS also `mlx` for `vlm-mlx-engine`)
+
+## VLMs on Mac (MinerU)
+
+Statement PDFs can use **local** MinerU backends—no cloud LLM API for OCR.
+
+| Your Mac | Recommended backends | Notes |
+|----------|----------------------|--------|
+| **Apple Silicon (M1/M2/M3/…)** | `vlm-mlx-engine` (default) | MLX VLM on the Neural Engine / GPU; typically fastest local path. Needs recent macOS (MinerU docs often cite 13.5+). |
+| Same + stronger consensus | `vlm-mlx-engine,pipeline` | **Default** `PF_OCR_BACKENDS`: VLM + classic pipeline merged for agreement stats. |
+| Optional second VLM | add `vlm-transformers` | Hugging Face Transformers; can use MPS on Apple Silicon or CPU on Intel—slower than MLX. |
+| **Intel Mac** | `pipeline` and/or `vlm-transformers` | MLX VLM is not for Intel; use classic pipeline plus optional `vlm-transformers` (CPU/MPS if available). |
+
+Examples:
+
+```bash
+# Default Mac setup (already the app default when MinerU is installed)
+export PF_OCR_BACKENDS="vlm-mlx-engine,pipeline"
+export PF_OCR_ENSEMBLE=when_empty   # or always for every PDF
+
+uv sync --extra ocr
+./run.sh
+```
+
+Install the OCR extra (`uv sync --extra ocr` or `./scripts/dev.sh run`) so MinerU, PyTorch/transformers (pipeline + `vlm-transformers`), and on **macOS** MLX (`vlm-mlx-engine`) are present. First runs download model weights to MinerU’s cache (several GB for pipeline).
+
+**Smoke-test local backends** (after `uv sync --extra ocr`):
+
+```bash
+.venv/bin/python scripts/test_ocr_backends_mac.py
+```
+
+On Apple Silicon this verifies `pipeline`, `vlm-mlx-engine`, and `vlm-transformers` end-to-end on a tiny PDF. Linux installs omit the `mlx` extra; use `pipeline` and `vlm-transformers` there.
 
 ## Project layout
 
@@ -50,7 +84,8 @@ Same as `scripts/dev.sh clean …`.
 ├── .cache/               # regenerable outputs (gitignored)
 ├── data/settings/        # user JSON config (gitignored)
 ├── scripts/
-│   └── dev.sh            # run | clean
+│   ├── dev.sh            # run | clean
+│   └── test_ocr_backends_mac.py  # optional MinerU backend smoke test
 ├── src/personal_finance/
 │   ├── app.py
 │   ├── analytics.py
