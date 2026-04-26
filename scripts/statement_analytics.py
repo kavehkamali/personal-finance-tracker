@@ -387,6 +387,18 @@ def _is_debit_refund(description: object) -> bool:
     return "refund" in text or "rebate" in text or "item returned" in text
 
 
+def _move_refunds_to_transaction_month(refunds: pd.DataFrame, complete_months: set[str]) -> pd.DataFrame:
+    if refunds.empty or "transaction_date" not in refunds.columns:
+        return refunds
+
+    moved = refunds.copy()
+    moved["source_statement_month"] = moved["statement_month"]
+    txn_month = pd.to_datetime(moved["transaction_date"], errors="coerce").dt.strftime("%Y-%m")
+    valid_txn_month = txn_month.notna() & txn_month.isin(complete_months)
+    moved.loc[valid_txn_month, "statement_month"] = txn_month[valid_txn_month]
+    return moved
+
+
 def _income_source(description: object) -> str:
     text = str(description or "").lower()
     text = " ".join(text.split())
@@ -521,6 +533,7 @@ def _spend_rows_for_complete_months(rows: pd.DataFrame, complete_months: set[str
         credit_refunds["spend_source"] = "credit_card_refund"
         credit_refunds["is_refund"] = True
         credit_refunds["refund_amount"] = -credit_refunds["amount"]
+        credit_refunds = _move_refunds_to_transaction_month(credit_refunds, complete_months)
 
     debit = work[
         work["account_kind"].eq("chequing")
@@ -546,12 +559,16 @@ def _spend_rows_for_complete_months(rows: pd.DataFrame, complete_months: set[str
         debit_refunds["excluded_as_internal"] = False
         debit_refunds["is_refund"] = True
         debit_refunds["refund_amount"] = debit_refunds["amount"]
+        debit_refunds = _move_refunds_to_transaction_month(debit_refunds, complete_months)
 
     parts = [part for part in (credit, credit_refunds, debit, debit_refunds) if not part.empty]
     combined = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
     if combined.empty:
         return combined
 
+    if "source_statement_month" not in combined.columns:
+        combined["source_statement_month"] = combined["statement_month"]
+    combined["source_statement_month"] = combined["source_statement_month"].fillna(combined["statement_month"])
     combined["smart_category"] = combined["description"].map(_smart_credit_category)
     return combined
 
@@ -672,6 +689,7 @@ def _spend_category_stats(spend: pd.DataFrame, month_count: int) -> tuple[pd.Dat
     line_items = spend[
         [
             "statement_month",
+            "source_statement_month",
             "account_key",
             "spend_source",
             "transaction_date",
@@ -707,6 +725,7 @@ def _refund_stats(spend: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     line_items = refunds[
         [
             "statement_month",
+            "source_statement_month",
             "account_key",
             "spend_source",
             "transaction_date",

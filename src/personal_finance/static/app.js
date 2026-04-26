@@ -190,6 +190,7 @@ function setKpis(data) {
 
 function renderCategoryChart(data) {
   const rows = (data.spend?.summary || []).slice().sort((a, b) => asNumber(a.total_expense) - asNumber(b.total_expense));
+  $("category-chart").style.height = `${Math.max(420, rows.length * 30)}px`;
   const trace = {
     type: "bar",
     orientation: "h",
@@ -207,7 +208,7 @@ function renderCategoryChart(data) {
       paper_bgcolor: "rgba(0,0,0,0)",
       plot_bgcolor: "rgba(0,0,0,0)",
       xaxis: { tickprefix: "$", gridcolor: "rgba(15,23,42,.09)" },
-      yaxis: { fixedrange: true },
+      yaxis: { fixedrange: true, automargin: true },
       font: { family: "Inter, sans-serif", color: "#344054" },
     },
     { responsive: true, displaylogo: false }
@@ -407,7 +408,8 @@ function showCategoryDetails(category, month = null) {
   $("detail-title").textContent = category;
   $("detail-subtitle").textContent = `${month || "All included months"} · ${rows.length} transactions · ${fmtMoney(total)}`;
   renderSortableDetailTable(rows, [
-    { key: "statement_month", label: "Month" },
+    { key: "statement_month", label: "Applied month" },
+    { key: "source_statement_month", label: "Statement month" },
     { key: "transaction_date", label: "Date" },
     { key: "spend_source", label: "Source" },
     { key: "account_key", label: "Account" },
@@ -426,7 +428,8 @@ function showRefundDetails(category, month = null) {
   $("detail-title").textContent = `Refunds: ${category}`;
   $("detail-subtitle").textContent = `${month || "All included months"} · ${rows.length} refunds · ${fmtMoney(total)}`;
   renderSortableDetailTable(rows, [
-    { key: "statement_month", label: "Month" },
+    { key: "statement_month", label: "Applied month" },
+    { key: "source_statement_month", label: "Statement month" },
     { key: "transaction_date", label: "Date" },
     { key: "spend_source", label: "Source" },
     { key: "account_key", label: "Account" },
