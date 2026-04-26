@@ -1,19 +1,22 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
 
 :root {
-  --bg: #f6f7fb;
+  --bg: #f7f8fb;
   --surface: #ffffff;
-  --ink: #182230;
-  --text: #334155;
+  --surface-2: #fbfcfe;
+  --ink: #0f172a;
+  --text: #344054;
   --muted: #667085;
-  --border: #d9e1ec;
-  --soft: #edf6f2;
-  --green: #198754;
-  --blue: #1f6feb;
-  --amber: #b7791f;
-  --red: #d1495b;
-  --shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 14px 38px rgba(27, 39, 68, 0.07);
-  --radius: 8px;
+  --border: #e4e7ec;
+  --border-strong: #cbd5e1;
+  --soft: #f1f5f9;
+  --green: #16a37a;
+  --blue: #2563eb;
+  --amber: #d97706;
+  --red: #e11d48;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 10px 24px rgba(16, 24, 40, 0.06);
+  --radius: 12px;
+  --space: 16px;
 }
 
 * {
@@ -24,7 +27,9 @@ body {
   margin: 0;
   min-height: 100vh;
   color: var(--text);
-  background: var(--bg);
+  background:
+    linear-gradient(180deg, #eef4ff 0, rgba(238, 244, 255, 0) 280px),
+    var(--bg);
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 14px;
 }
@@ -37,10 +42,10 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 28px;
-  background: rgba(255, 255, 255, 0.92);
-  border-bottom: 1px solid var(--border);
-  backdrop-filter: blur(12px);
+  padding: 16px 28px;
+  background: rgba(15, 23, 42, 0.92);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(16px);
 }
 
 .brand {
@@ -53,29 +58,31 @@ body {
 .brand-mark {
   width: 34px;
   height: 34px;
-  border-radius: 8px;
-  background: linear-gradient(145deg, #0f9f6e, #2f6fed);
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, #6ee7b7 0 48%, transparent 48%),
+    linear-gradient(135deg, #93c5fd 52%, #2563eb 100%);
 }
 
 .brand strong {
   display: block;
-  color: var(--ink);
+  color: #f8fafc;
   font-size: 1rem;
   font-weight: 800;
 }
 
 .brand span:last-child {
   display: block;
-  color: var(--muted);
+  color: #b6c2d2;
   font-size: 0.8rem;
 }
 
 .btn {
-  height: 34px;
-  padding: 0 13px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--ink);
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: var(--blue);
   color: #fff;
   font: inherit;
   font-weight: 700;
@@ -84,6 +91,7 @@ body {
 
 .btn-secondary {
   background: var(--surface);
+  border-color: var(--border);
   color: var(--ink);
 }
 
@@ -114,22 +122,29 @@ body {
 .shell {
   max-width: 1440px;
   margin: 0 auto;
-  padding: 22px 28px 42px;
+  padding: 24px 28px 42px;
+}
+
+.shell > section {
+  margin: 0;
+}
+
+.shell > section + section {
+  margin-top: var(--space);
 }
 
 .hero-grid,
 .grid {
   display: grid;
-  gap: 14px;
+  gap: var(--space);
 }
 
 .hero-grid {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .grid-two {
   grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.65fr);
-  margin-top: 14px;
 }
 
 .metric-card,
@@ -142,15 +157,38 @@ body {
 }
 
 .metric-card {
-  min-height: 116px;
+  position: relative;
+  min-height: 120px;
   padding: 16px;
-  background: linear-gradient(180deg, #fff, #fbfcfe);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.metric-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--blue);
+}
+
+.metric-card:nth-child(3)::before {
+  background: var(--green);
+}
+
+.metric-card:nth-child(4)::before {
+  background: var(--amber);
+}
+
+.metric-card:nth-child(5)::before,
+.metric-card:nth-child(6)::before {
+  background: #7c3aed;
 }
 
 .metric-card-strong {
-  background: linear-gradient(145deg, #13251d, #23505c);
-  color: #ecfdf5;
-  border-color: #23505c;
+  background: #101828;
+  color: #f8fafc;
+  border-color: #101828;
 }
 
 .metric-label,
@@ -169,9 +207,10 @@ body {
   display: block;
   margin: 11px 0 8px;
   color: var(--ink);
-  font-size: clamp(1.35rem, 2.6vw, 2rem);
+  font-size: clamp(1.85rem, 2.4vw, 2.35rem);
   line-height: 1;
   letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .metric-card-strong strong {
@@ -181,8 +220,7 @@ body {
 .audit-strip {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 14px;
+  gap: var(--space);
 }
 
 .process-panel {
@@ -190,13 +228,13 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-top: 14px;
   padding: 14px 16px;
-  background: #fdfefe;
+  background: rgba(255, 255, 255, 0.82);
   border: 1px solid var(--border);
-  border-left: 4px solid var(--green);
+  border-left: 4px solid var(--blue);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
 }
 
 .audit-pill {
@@ -212,7 +250,8 @@ body {
 }
 
 .audit-pill:hover {
-  border-color: #9db4c8;
+  border-color: var(--border-strong);
+  background: var(--surface-2);
 }
 
 .audit-pill span {
@@ -276,7 +315,7 @@ p {
 .compact-table {
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 10px;
 }
 
 .table-wrap-sm {
@@ -291,8 +330,8 @@ table {
 
 th,
 td {
-  padding: 9px 10px;
-  border-bottom: 1px solid #edf1f5;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef2f7;
   text-align: left;
   vertical-align: top;
   white-space: nowrap;
@@ -302,7 +341,7 @@ th {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #f9fbfd;
+  background: #f8fafc;
   color: #475569;
   font-size: 0.74rem;
   font-weight: 800;
@@ -324,7 +363,7 @@ tbody tr[tabindex] {
 }
 
 tbody tr[tabindex]:hover {
-  background: var(--soft);
+  background: #f8fbff;
 }
 
 tbody tr.selected-row {
@@ -340,7 +379,6 @@ tbody tr.selected-row {
 
 .detail-panel {
   min-height: 220px;
-  margin-top: 14px;
   border-color: #b8cfe6;
 }
 

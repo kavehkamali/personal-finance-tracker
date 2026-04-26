@@ -7,18 +7,18 @@ const money = new Intl.NumberFormat("en-CA", {
 const num = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 2 });
 
 const colors = [
-  "#1f6feb",
-  "#198754",
-  "#c27c0e",
-  "#c2415b",
-  "#6f42c1",
-  "#0f7f8c",
-  "#8f5e15",
-  "#536471",
-  "#4d7c0f",
-  "#b45309",
-  "#0f766e",
+  "#2563eb",
+  "#16a37a",
+  "#d97706",
   "#7c3aed",
+  "#0891b2",
+  "#e11d48",
+  "#475569",
+  "#65a30d",
+  "#0f766e",
+  "#9333ea",
+  "#0284c7",
+  "#b45309",
 ];
 
 let dashboard = null;
@@ -144,7 +144,7 @@ function renderCategoryChart(data) {
       plot_bgcolor: "rgba(0,0,0,0)",
       xaxis: { tickprefix: "$", gridcolor: "rgba(15,23,42,.09)" },
       yaxis: { fixedrange: true },
-      font: { family: "Inter, sans-serif", color: "#334155" },
+      font: { family: "Inter, sans-serif", color: "#344054" },
     },
     { responsive: true, displaylogo: false }
   );
@@ -161,9 +161,9 @@ function renderIncomeChart(data) {
   Plotly.newPlot(
     "income-chart",
     [
-      { type: "bar", name: "External cash-in", x: months, y: rows.map((r) => asNumber(r.external_cash_in)), marker: { color: "#0f766e" } },
-      { type: "bar", name: "LG payroll", x: months, y: rows.map((r) => asNumber(r.lg_payroll)), marker: { color: "#1f6feb" } },
-      { type: "bar", name: "EI / EL payroll", x: months, y: rows.map((r) => asNumber(r.el_unitytech_payroll)), marker: { color: "#c27c0e" } },
+      { type: "bar", name: "External cash-in", x: months, y: rows.map((r) => asNumber(r.external_cash_in)), marker: { color: "#16a37a" } },
+      { type: "bar", name: "LG payroll", x: months, y: rows.map((r) => asNumber(r.lg_payroll)), marker: { color: "#2563eb" } },
+      { type: "bar", name: "EI / EL payroll", x: months, y: rows.map((r) => asNumber(r.el_unitytech_payroll)), marker: { color: "#d97706" } },
     ],
     {
       barmode: "group",
@@ -173,7 +173,7 @@ function renderIncomeChart(data) {
       yaxis: { tickprefix: "$", gridcolor: "rgba(15,23,42,.09)" },
       xaxis: { type: "category" },
       legend: { orientation: "h", y: -0.22 },
-      font: { family: "Inter, sans-serif", color: "#334155" },
+      font: { family: "Inter, sans-serif", color: "#344054" },
     },
     { responsive: true, displaylogo: false }
   );
