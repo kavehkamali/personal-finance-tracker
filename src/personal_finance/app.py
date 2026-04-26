@@ -97,6 +97,8 @@ def _audit_dashboard_payload() -> dict[str, object]:
     all_spend_by_month = _records_from_csv(ANALYTICS_DIR / "all_spend_category_by_month.csv")
     all_spend_transactions = _records_from_csv(ANALYTICS_DIR / "all_spend_categorized_transactions.csv")
     all_spend_totals = _first_record(ANALYTICS_DIR / "all_spend_summary.csv")
+    refund_by_month = _records_from_csv(ANALYTICS_DIR / "refunds_by_month.csv")
+    refund_transactions = _records_from_csv(ANALYTICS_DIR / "refund_transactions.csv")
 
     credit_summary = _first_record(ANALYTICS_DIR / "credit_card_expense_summary.csv")
     credit_by_month = _records_from_csv(ANALYTICS_DIR / "credit_card_expenses_by_month.csv")
@@ -125,10 +127,7 @@ def _audit_dashboard_payload() -> dict[str, object]:
             "ignored_duplicate_file_count": len(ignored_duplicate_files),
             "exact_duplicate_file_count": len(exact_duplicate_files),
             "total_spend": round(total_spend, 2),
-            "external_spend_excluding_credit_line_principal": float(
-                all_spend_totals.get("external_expense_excluding_credit_line_principal") or 0
-            ),
-            "credit_line_principal_payments": float(all_spend_totals.get("credit_line_principal_payments") or 0),
+            "external_spend": float(all_spend_totals.get("external_expense") or total_spend or 0),
             "credit_card_expense": float(all_spend_totals.get("credit_card_expense") or 0),
             "debit_bank_expense": float(all_spend_totals.get("debit_bank_expense") or 0),
             "months_included": str(all_spend_totals.get("months_included") or credit_summary.get("months_included") or ""),
@@ -153,6 +152,10 @@ def _audit_dashboard_payload() -> dict[str, object]:
             "by_month": all_spend_by_month,
             "transactions": all_spend_transactions,
             "totals": all_spend_totals,
+        },
+        "refunds": {
+            "by_month": refund_by_month,
+            "transactions": refund_transactions,
         },
         "credit_cards": {
             "summary": credit_summary,

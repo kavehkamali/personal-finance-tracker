@@ -35,12 +35,7 @@
         <article class="metric-card">
           <span class="metric-label">External spend</span>
           <strong id="kpi-external-spend">...</strong>
-          <span>Excludes own transfers and LOC principal</span>
-        </article>
-        <article class="metric-card">
-          <span class="metric-label">LOC principal</span>
-          <strong id="kpi-loc-principal">...</strong>
-          <span>Separated from survival spend</span>
+          <span>Own transfers excluded; refunds netted</span>
         </article>
         <article class="metric-card">
           <span class="metric-label">LG payroll</span>
@@ -95,10 +90,20 @@
         <div class="panel-head">
           <div>
             <h2>Monthly Breakdown</h2>
-            <p>Click any category row to inspect details. Credit-line principal is separated from external spend.</p>
+            <p>Click any category row to inspect details. Refunds are deducted inside the same category.</p>
           </div>
         </div>
         <div id="month-category-table" class="table-wrap"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Refunds by Month</h2>
+            <p>Click any refund category row to inspect the refund transactions.</p>
+          </div>
+        </div>
+        <div id="refunds-table" class="table-wrap"></div>
       </section>
 
       <section class="panel detail-panel" id="selected-detail-panel">
@@ -128,7 +133,7 @@
           <div class="panel-head">
             <div>
               <h2>Spend Split</h2>
-              <p>External spend, credit cards, debit bank spend, and LOC principal.</p>
+              <p>Net spend by source after own transfers are removed and refunds are deducted.</p>
             </div>
           </div>
           <div id="spend-split-table" class="compact-table"></div>

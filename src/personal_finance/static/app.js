@@ -165,12 +165,18 @@ function pivotCategories(rows) {
   return { months, categories, lookup };
 }
 
+function pivotRefunds(rows) {
+  const months = [...new Set(rows.map((r) => String(r.statement_month)))].sort();
+  const categories = [...new Set(rows.map((r) => String(r.category)))];
+  const lookup = new Map(rows.map((r) => [`${r.category}|||${r.statement_month}`, asNumber(r.refund_amount)]));
+  return { months, categories, lookup };
+}
+
 function setKpis(data) {
   const ov = data.overview || {};
   $("kpi-total-spend").textContent = fmtMoney(ov.total_spend);
   $("kpi-credit").textContent = fmtMoney(ov.credit_card_expense);
-  $("kpi-external-spend").textContent = fmtMoney(ov.external_spend_excluding_credit_line_principal);
-  $("kpi-loc-principal").textContent = fmtMoney(ov.credit_line_principal_payments);
+  $("kpi-external-spend").textContent = fmtMoney(ov.external_spend);
   $("kpi-lg").textContent = fmtMoney(ov.lg_payroll);
   $("kpi-el").textContent = fmtMoney(ov.el_payroll);
   $("kpi-months").textContent = `Months: ${ov.months_included || "not available"}`;
@@ -255,13 +261,8 @@ function renderSpendSplitTable(data) {
   const rows = [
     {
       line: "External spend",
-      amount: ov.external_spend_excluding_credit_line_principal,
-      notes: "Own-account transfers and LOC principal excluded",
-    },
-    {
-      line: "Credit-line principal",
-      amount: ov.credit_line_principal_payments,
-      notes: "Shown separately from survival spend",
+      amount: ov.external_spend,
+      notes: "Own-account transfers removed; refunds deducted by category",
     },
     {
       line: "Credit cards",
@@ -304,6 +305,31 @@ function renderMonthCategoryTable(data) {
   const container = $("month-category-table");
   renderSortableTable(container, tableRows, columns, {
     onRowClick: (row) => showCategoryDetails(row.category),
+  });
+}
+
+function renderRefundsTable(data) {
+  const rows = data.refunds?.by_month || [];
+  const { months, categories, lookup } = pivotRefunds(rows);
+  const totals = new Map();
+  categories.forEach((cat) => {
+    totals.set(cat, months.reduce((sum, month) => sum + (lookup.get(`${cat}|||${month}`) || 0), 0));
+  });
+  const sorted = categories.sort((a, b) => (totals.get(b) || 0) - (totals.get(a) || 0));
+  const tableRows = sorted.map((category) => {
+    const row = { category, total: totals.get(category) || 0 };
+    months.forEach((month) => {
+      row[month] = lookup.get(`${category}|||${month}`) || 0;
+    });
+    return row;
+  });
+  const columns = [
+    { key: "category", label: "Category" },
+    ...months.map((month) => ({ key: month, label: month, money: true, align: "right" })),
+    { key: "total", label: "Total", money: true, align: "right" },
+  ];
+  renderSortableTable($("refunds-table"), tableRows, columns, {
+    onRowClick: (row) => showRefundDetails(row.category),
   });
 }
 
@@ -391,6 +417,25 @@ function showCategoryDetails(category, month = null) {
   revealDetails();
 }
 
+function showRefundDetails(category, month = null) {
+  const rows = (dashboard.refunds?.transactions || [])
+    .filter((row) => row.category === category)
+    .filter((row) => (month ? row.statement_month === month : true))
+    .sort((a, b) => asNumber(b.refund_amount) - asNumber(a.refund_amount));
+  const total = rows.reduce((sum, row) => sum + asNumber(row.refund_amount), 0);
+  $("detail-title").textContent = `Refunds: ${category}`;
+  $("detail-subtitle").textContent = `${month || "All included months"} · ${rows.length} refunds · ${fmtMoney(total)}`;
+  renderSortableDetailTable(rows, [
+    { key: "statement_month", label: "Month" },
+    { key: "transaction_date", label: "Date" },
+    { key: "spend_source", label: "Source" },
+    { key: "account_key", label: "Account" },
+    { key: "description", label: "Description" },
+    { key: "refund_amount", label: "Refund", money: true, align: "right" },
+  ]);
+  revealDetails();
+}
+
 function clearDetails() {
   selectedCategory = null;
   $("selected-detail-panel").classList.remove("detail-active");
@@ -407,6 +452,7 @@ function render(data) {
   renderIncomeTable(data);
   renderSpendSplitTable(data);
   renderMonthCategoryTable(data);
+  renderRefundsTable(data);
   renderAuditTable(data);
   clearDetails();
 }

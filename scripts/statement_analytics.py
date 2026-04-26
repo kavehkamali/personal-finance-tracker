@@ -374,7 +374,17 @@ def _is_internal_inflow(description: object) -> bool:
 def _is_credit_line_principal_movement(description: object) -> bool:
     text = str(description or "").lower()
     text = " ".join(text.split())
-    return "online banking loan payment" in text or "www pmt" in text
+    return (
+        "online banking loan payment" in text
+        or "www pmt" in text
+        or ("loan payment" in text and "toyota" not in text)
+    )
+
+
+def _is_debit_refund(description: object) -> bool:
+    text = str(description or "").lower()
+    text = " ".join(text.split())
+    return "refund" in text or "rebate" in text or "item returned" in text
 
 
 def _income_source(description: object) -> str:
@@ -497,6 +507,20 @@ def _spend_rows_for_complete_months(rows: pd.DataFrame, complete_months: set[str
     credit["expense_amount"] = credit["amount"]
     credit["spend_source"] = "credit_card"
     credit["excluded_as_internal"] = False
+    credit["is_refund"] = False
+    credit["refund_amount"] = 0.0
+
+    credit_refunds = work[
+        work["account_kind"].isin(["visa", "mastercard"])
+        & (work["amount"] < 0)
+    ].copy()
+    if not credit_refunds.empty:
+        credit_refunds["excluded_as_internal"] = credit_refunds["description"].map(_is_own_account_transfer)
+        credit_refunds = credit_refunds[~credit_refunds["excluded_as_internal"]].copy()
+        credit_refunds["expense_amount"] = credit_refunds["amount"]
+        credit_refunds["spend_source"] = "credit_card_refund"
+        credit_refunds["is_refund"] = True
+        credit_refunds["refund_amount"] = -credit_refunds["amount"]
 
     debit = work[
         work["account_kind"].eq("chequing")
@@ -506,9 +530,25 @@ def _spend_rows_for_complete_months(rows: pd.DataFrame, complete_months: set[str
         debit["expense_amount"] = -debit["amount"]
         debit["spend_source"] = "debit_bank"
         debit["excluded_as_internal"] = debit["description"].map(_is_own_account_transfer)
-        debit = debit[~debit["excluded_as_internal"]].copy()
+        debit["excluded_as_principal"] = debit["description"].map(_is_credit_line_principal_movement)
+        debit["is_refund"] = False
+        debit["refund_amount"] = 0.0
+        debit = debit[~debit["excluded_as_internal"] & ~debit["excluded_as_principal"]].copy()
 
-    combined = pd.concat([credit, debit], ignore_index=True) if not debit.empty else credit
+    debit_refunds = work[
+        work["account_kind"].eq("chequing")
+        & (work["amount"] > 0)
+        & work["description"].map(_is_debit_refund)
+    ].copy()
+    if not debit_refunds.empty:
+        debit_refunds["expense_amount"] = -debit_refunds["amount"]
+        debit_refunds["spend_source"] = "debit_bank_refund"
+        debit_refunds["excluded_as_internal"] = False
+        debit_refunds["is_refund"] = True
+        debit_refunds["refund_amount"] = debit_refunds["amount"]
+
+    parts = [part for part in (credit, credit_refunds, debit, debit_refunds) if not part.empty]
+    combined = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
     if combined.empty:
         return combined
 
@@ -647,6 +687,44 @@ def _spend_category_stats(spend: pd.DataFrame, month_count: int) -> tuple[pd.Dat
     return summary, by_month, by_source, line_items
 
 
+def _refund_stats(spend: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if spend.empty or "is_refund" not in spend.columns:
+        return pd.DataFrame(), pd.DataFrame()
+
+    refunds = spend[spend["is_refund"].astype(bool)].copy()
+    if refunds.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    by_month = (
+        refunds.groupby(["statement_month", "smart_category"], dropna=False)
+        .agg(refund_amount=("refund_amount", "sum"), transaction_count=("refund_amount", "size"))
+        .reset_index()
+        .rename(columns={"smart_category": "category"})
+        .sort_values(["statement_month", "refund_amount"], ascending=[True, False])
+    )
+    by_month["refund_amount"] = by_month["refund_amount"].map(_money)
+
+    line_items = refunds[
+        [
+            "statement_month",
+            "account_key",
+            "spend_source",
+            "transaction_date",
+            "posting_date",
+            "description",
+            "refund_amount",
+            "smart_category",
+            "source_statement",
+        ]
+    ].rename(columns={"smart_category": "category"})
+    line_items = line_items.sort_values(
+        ["statement_month", "category", "refund_amount"],
+        ascending=[True, True, False],
+    )
+    line_items["refund_amount"] = line_items["refund_amount"].map(_money)
+    return by_month, line_items
+
+
 def build_analytics(audit_dir: Path, output_dir: Path) -> dict[str, object]:
     reconcile_path = audit_dir / "statement_reconciliation.csv"
     coverage_path = audit_dir / "account_month_coverage.csv"
@@ -782,19 +860,15 @@ def build_analytics(audit_dir: Path, output_dir: Path) -> dict[str, object]:
         all_spend,
         len(complete_credit_month_set),
     )
+    refund_by_month, refund_line_items = _refund_stats(all_spend)
     all_spend_total = _money(all_spend["expense_amount"].sum()) if not all_spend.empty else 0.0
-    external_spend = all_spend[
-        ~all_spend["description"].map(_is_credit_line_principal_movement)
-    ].copy() if not all_spend.empty else all_spend
-    external_spend_total = _money(external_spend["expense_amount"].sum()) if not external_spend.empty else 0.0
-    credit_line_principal_total = _money(all_spend_total - external_spend_total)
     all_spend_debit_total = (
-        _money(all_spend.loc[all_spend["spend_source"].eq("debit_bank"), "expense_amount"].sum())
+        _money(all_spend.loc[all_spend["spend_source"].astype(str).str.startswith("debit_bank"), "expense_amount"].sum())
         if not all_spend.empty
         else 0.0
     )
     all_spend_credit_total = (
-        _money(all_spend.loc[all_spend["spend_source"].eq("credit_card"), "expense_amount"].sum())
+        _money(all_spend.loc[all_spend["spend_source"].astype(str).str.startswith("credit_card"), "expense_amount"].sum())
         if not all_spend.empty
         else 0.0
     )
@@ -805,8 +879,7 @@ def build_analytics(audit_dir: Path, output_dir: Path) -> dict[str, object]:
         ),
         "months_included": ", ".join(sorted(complete_credit_month_set)),
         "total_expense": all_spend_total,
-        "external_expense_excluding_credit_line_principal": external_spend_total,
-        "credit_line_principal_payments": credit_line_principal_total,
+        "external_expense": all_spend_total,
         "credit_card_expense": all_spend_credit_total,
         "debit_bank_expense": all_spend_debit_total,
         "avg_monthly_total_expense": _money(all_spend_total / max(1, len(complete_credit_month_set))),
@@ -841,6 +914,8 @@ def build_analytics(audit_dir: Path, output_dir: Path) -> dict[str, object]:
     all_spend_by_source.to_csv(output_dir / "all_spend_category_by_source.csv", index=False)
     all_spend_line_items.to_csv(output_dir / "all_spend_categorized_transactions.csv", index=False)
     pd.DataFrame([all_spend_summary_row]).to_csv(output_dir / "all_spend_summary.csv", index=False)
+    refund_by_month.to_csv(output_dir / "refunds_by_month.csv", index=False)
+    refund_line_items.to_csv(output_dir / "refund_transactions.csv", index=False)
     income_by_month.to_csv(output_dir / "income_cash_in_check_by_month.csv", index=False)
     income_by_source.to_csv(output_dir / "income_cash_in_by_source.csv", index=False)
     income_line_items.to_csv(output_dir / "income_cash_in_transactions.csv", index=False)
