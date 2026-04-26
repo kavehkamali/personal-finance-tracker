@@ -101,39 +101,38 @@ function setKpis(data) {
   const ov = data.overview || {};
   $("kpi-total-spend").textContent = fmtMoney(ov.total_spend);
   $("kpi-credit").textContent = fmtMoney(ov.credit_card_expense);
-  $("kpi-debit").textContent = fmtMoney(ov.debit_bank_expense);
-  $("kpi-payroll").textContent = fmtMoney(ov.lg_plus_el_payroll);
+  $("kpi-external-spend").textContent = fmtMoney(ov.external_spend_excluding_credit_line_principal);
+  $("kpi-lg").textContent = fmtMoney(ov.lg_payroll);
+  $("kpi-el").textContent = fmtMoney(ov.el_payroll);
   $("kpi-months").textContent = `Months: ${ov.months_included || "not available"}`;
   $("kpi-income-diff").textContent = `${fmtMoney(ov.payroll_external_diff)} external cash-in not matched to LG/EL payroll`;
   $("audit-middle-gaps").textContent = ov.middle_gap_count ?? 0;
   $("audit-failed").textContent = ov.failed_reconciliation_count ?? 0;
   $("audit-partial").textContent = ov.partial_or_missing_count ?? 0;
   $("audit-accounts").textContent = ov.account_count ?? 0;
+  $("audit-duplicates").textContent = ov.ignored_duplicate_file_count ?? 0;
 }
 
 function renderCategoryChart(data) {
-  const rows = data.spend?.by_month || [];
-  const { months, categories, lookup } = pivotCategories(rows);
-  const traces = categories.map((category, index) => ({
+  const rows = (data.spend?.summary || []).slice().sort((a, b) => asNumber(a.total_expense) - asNumber(b.total_expense));
+  const trace = {
     type: "bar",
-    name: category,
-    x: months,
-    y: months.map((month) => lookup.get(`${category}|||${month}`) || 0),
-    marker: { color: colors[index % colors.length] },
-    customdata: months.map((month) => [category, month]),
-    hovertemplate: "%{customdata[0]}<br>%{x}: %{y:$,.2f}<extra></extra>",
-  }));
+    orientation: "h",
+    x: rows.map((row) => asNumber(row.total_expense)),
+    y: rows.map((row) => row.category),
+    marker: { color: rows.map((_, i) => colors[i % colors.length]) },
+    customdata: rows.map((row) => row.category),
+    hovertemplate: "%{y}<br>%{x:$,.2f}<extra></extra>",
+  };
   Plotly.newPlot(
     "category-chart",
-    traces,
+    [trace],
     {
-      barmode: "stack",
-      margin: { l: 56, r: 16, t: 10, b: 42 },
+      margin: { l: 180, r: 20, t: 10, b: 36 },
       paper_bgcolor: "rgba(0,0,0,0)",
       plot_bgcolor: "rgba(0,0,0,0)",
-      yaxis: { tickprefix: "$", gridcolor: "rgba(15,23,42,.09)" },
-      xaxis: { fixedrange: true, type: "category" },
-      legend: { orientation: "h", y: -0.22 },
+      xaxis: { tickprefix: "$", gridcolor: "rgba(15,23,42,.09)" },
+      yaxis: { fixedrange: true },
       font: { family: "Inter, sans-serif", color: "#334155" },
     },
     { responsive: true, displaylogo: false }
@@ -141,7 +140,7 @@ function renderCategoryChart(data) {
   $("category-chart").on("plotly_click", (event) => {
     const point = event.points?.[0];
     if (!point) return;
-    showCategoryDetails(point.customdata[0], point.customdata[1]);
+    showCategoryDetails(point.customdata);
   });
 }
 
@@ -186,9 +185,33 @@ function renderCategoryTable(data) {
     { key: "total_expense", label: "Total", money: true, align: "right" },
     { key: "share_of_total", label: "Share %", number: true, align: "right" },
     { key: "transaction_count", label: "Tx", number: true, align: "right" },
-    { key: "avg_monthly_expense", label: "Avg / month", money: true, align: "right" },
   ], { rowClick: true });
   attachRowClicks(container, rows, (row) => showCategoryDetails(row.category));
+}
+
+function renderMonthCategoryTable(data) {
+  const rows = data.spend?.by_month || [];
+  const { months, categories, lookup } = pivotCategories(rows);
+  const totals = new Map();
+  categories.forEach((cat) => {
+    totals.set(cat, months.reduce((sum, month) => sum + (lookup.get(`${cat}|||${month}`) || 0), 0));
+  });
+  const sorted = categories.sort((a, b) => (totals.get(b) || 0) - (totals.get(a) || 0));
+  const tableRows = sorted.map((category) => {
+    const row = { category, total: totals.get(category) || 0 };
+    months.forEach((month) => {
+      row[month] = lookup.get(`${category}|||${month}`) || 0;
+    });
+    return row;
+  });
+  const columns = [
+    { key: "category", label: "Category" },
+    ...months.map((month) => ({ key: month, label: month, money: true, align: "right" })),
+    { key: "total", label: "Total", money: true, align: "right" },
+  ];
+  const container = $("month-category-table");
+  container.innerHTML = rowsToTable(tableRows, columns, { rowClick: true });
+  attachRowClicks(container, tableRows, (row) => showCategoryDetails(row.category));
 }
 
 function renderAuditTable(data, mode = "failed-reconciliation") {
@@ -228,6 +251,15 @@ function renderAuditTable(data, mode = "failed-reconciliation") {
       { key: "months_partial", label: "Partial", number: true, align: "right" },
       { key: "months_missing", label: "Missing", number: true, align: "right" },
     ];
+  } else if (mode === "duplicates") {
+    rows = audit.ignored_duplicate_files || [];
+    columns = [
+      { key: "filename", label: "Ignored file" },
+      { key: "logical_statement_key", label: "Logical statement" },
+      { key: "same_logical_statement_count", label: "Same logical", number: true, align: "right" },
+      { key: "same_content_file_count", label: "Same content", number: true, align: "right" },
+      { key: "sha256", label: "SHA-256" },
+    ];
   }
   $("audit-table").innerHTML = rowsToTable(rows, columns);
 }
@@ -264,6 +296,7 @@ function render(data) {
   renderCategoryChart(data);
   renderIncomeChart(data);
   renderIncomeTable(data);
+  renderMonthCategoryTable(data);
   renderCategoryTable(data);
   renderAuditTable(data);
   clearDetails();
@@ -294,8 +327,31 @@ async function refreshAudit() {
   }
 }
 
+async function uploadStatements(event) {
+  const files = event.target.files;
+  if (!files || files.length === 0) return;
+  const btn = $("reload-btn");
+  btn.disabled = true;
+  btn.textContent = "Uploading...";
+  const body = new FormData();
+  [...files].forEach((file) => body.append("files", file));
+  try {
+    await fetchJson("/api/audit-upload", { method: "POST", body });
+    btn.textContent = "Refreshing...";
+    render(await fetchJson("/api/audit-refresh", { method: "POST" }));
+  } catch (error) {
+    $("detail-title").textContent = "Upload failed";
+    $("detail-subtitle").textContent = error.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Refresh audit";
+    event.target.value = "";
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   $("reload-btn").addEventListener("click", refreshAudit);
+  $("file-input").addEventListener("change", uploadStatements);
   $("clear-detail-btn").addEventListener("click", clearDetails);
   document.querySelectorAll(".audit-pill").forEach((button) => {
     button.addEventListener("click", () => {

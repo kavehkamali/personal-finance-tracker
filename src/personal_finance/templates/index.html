@@ -19,6 +19,10 @@
         </div>
       </div>
       <div class="top-actions">
+        <label class="btn btn-secondary file-btn">
+          Upload statements
+          <input id="file-input" type="file" multiple accept=".pdf,.md" hidden />
+        </label>
         <button class="btn btn-secondary" id="reload-btn" type="button">Refresh audit</button>
       </div>
     </header>
@@ -36,14 +40,19 @@
           <span>Visa + MasterCard, complete months</span>
         </article>
         <article class="metric-card">
-          <span class="metric-label">Debit / bank spend</span>
-          <strong id="kpi-debit">...</strong>
-          <span>Own-account transfers excluded</span>
+          <span class="metric-label">External spend</span>
+          <strong id="kpi-external-spend">...</strong>
+          <span>Excludes own transfers and LOC principal</span>
         </article>
         <article class="metric-card">
-          <span class="metric-label">LG + EL payroll</span>
-          <strong id="kpi-payroll">...</strong>
-          <span id="kpi-income-diff">Compared with external cash-in</span>
+          <span class="metric-label">LG payroll</span>
+          <strong id="kpi-lg">...</strong>
+          <span>Company payroll only</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">EL payroll</span>
+          <strong id="kpi-el">...</strong>
+          <span id="kpi-income-diff">Separated from LG</span>
         </article>
       </section>
 
@@ -64,14 +73,18 @@
           <span>Accounts</span>
           <strong id="audit-accounts">0</strong>
         </button>
+        <button class="audit-pill" type="button" data-detail="duplicates">
+          <span>Ignored duplicates</span>
+          <strong id="audit-duplicates">0</strong>
+        </button>
       </section>
 
       <section class="grid grid-two">
         <article class="panel">
           <div class="panel-head">
             <div>
-              <h2>Monthly Category Spend</h2>
-              <p>Click a segment or row to inspect the underlying transactions.</p>
+              <h2>Category Ranking</h2>
+              <p>Click a bar or row to inspect the underlying transactions.</p>
             </div>
           </div>
           <div id="category-chart" class="chart"></div>
@@ -92,8 +105,18 @@
       <section class="panel">
         <div class="panel-head">
           <div>
-            <h2>Spend Breakdown</h2>
-            <p>Credit cards plus debit outflows. Obvious transfers between your own accounts are excluded.</p>
+            <h2>Monthly Breakdown</h2>
+            <p>Click any category row to inspect details. Credit-line principal is separated from external spend.</p>
+          </div>
+        </div>
+        <div id="month-category-table" class="table-wrap"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Category Totals</h2>
+            <p>Sorted by total over the complete months.</p>
           </div>
         </div>
         <div id="category-table" class="table-wrap"></div>

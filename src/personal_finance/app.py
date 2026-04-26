@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import subprocess
 import sys
+import re
 from pathlib import Path
 from typing import Annotated
 
@@ -80,9 +81,16 @@ def _sum_rows(rows: list[dict[str, object]], key: str) -> float:
     return round(total, 2)
 
 
+def _safe_input_filename(name: str) -> str:
+    raw = Path(name or "statement").name
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", raw).strip()
+    return safe or "statement"
+
+
 def _audit_dashboard_payload() -> dict[str, object]:
     account_summary = _records_from_csv(AUDIT_DIR / "account_summary.csv")
     account_month_coverage = _records_from_csv(AUDIT_DIR / "account_month_coverage.csv")
+    file_inventory = _records_from_csv(AUDIT_DIR / "statement_file_inventory.csv")
     reconciliation = _records_from_csv(AUDIT_DIR / "statement_reconciliation.csv")
 
     all_spend_summary = _records_from_csv(ANALYTICS_DIR / "all_spend_category_summary.csv")
@@ -96,6 +104,7 @@ def _audit_dashboard_payload() -> dict[str, object]:
     income_by_source = _records_from_csv(ANALYTICS_DIR / "income_cash_in_by_source.csv")
 
     failed_reconciliation = [row for row in reconciliation if not bool(row.get("reconcile_ok"))]
+    ignored_duplicate_files = [row for row in file_inventory if bool(row.get("ignored_duplicate_copy"))]
     middle_gaps = [row for row in account_summary if bool(row.get("has_middle_gap"))]
     partial_or_missing = [row for row in account_month_coverage if row.get("status") != "full"]
 
@@ -112,16 +121,25 @@ def _audit_dashboard_payload() -> dict[str, object]:
             "middle_gap_count": len(middle_gaps),
             "failed_reconciliation_count": len(failed_reconciliation),
             "partial_or_missing_count": len(partial_or_missing),
+            "ignored_duplicate_file_count": len(ignored_duplicate_files),
             "total_spend": round(total_spend, 2),
+            "external_spend_excluding_credit_line_principal": float(
+                all_spend_totals.get("external_expense_excluding_credit_line_principal") or 0
+            ),
+            "credit_line_principal_payments": float(all_spend_totals.get("credit_line_principal_payments") or 0),
             "credit_card_expense": float(all_spend_totals.get("credit_card_expense") or 0),
             "debit_bank_expense": float(all_spend_totals.get("debit_bank_expense") or 0),
             "months_included": str(all_spend_totals.get("months_included") or credit_summary.get("months_included") or ""),
+            "lg_payroll": float(income_total.get("lg_payroll") or 0),
+            "el_payroll": float(income_total.get("el_unitytech_payroll") or 0),
             "lg_plus_el_payroll": float(income_total.get("lg_plus_el_payroll") or 0),
             "external_cash_in": float(income_total.get("external_cash_in") or 0),
             "payroll_external_diff": float(income_total.get("payroll_vs_external_cash_in_diff") or 0),
         },
         "audit": {
             "account_summary": account_summary,
+            "file_inventory": file_inventory,
+            "ignored_duplicate_files": ignored_duplicate_files,
             "account_month_coverage": account_month_coverage,
             "partial_or_missing": partial_or_missing,
             "middle_gaps": middle_gaps,
@@ -190,6 +208,25 @@ async def audit_refresh() -> dict[str, object]:
     payload = _audit_dashboard_payload()
     payload["refresh_output"] = "\n".join(output)
     return payload
+
+
+@app.post("/api/audit-upload")
+async def audit_upload(files: list[UploadFile] = File(...)) -> dict[str, object]:
+    INPUT_STATEMENTS_DIR.mkdir(parents=True, exist_ok=True)
+    saved: list[str] = []
+    for file in files:
+        name = _safe_input_filename(file.filename or "statement")
+        target = INPUT_STATEMENTS_DIR / name
+        if target.exists():
+            stem = target.stem
+            suffix = target.suffix
+            n = 1
+            while target.exists():
+                target = INPUT_STATEMENTS_DIR / f"{stem}-{n}{suffix}"
+                n += 1
+        target.write_bytes(await file.read())
+        saved.append(target.name)
+    return {"ok": True, "saved_files": saved}
 
 
 @app.get("/api/summary")

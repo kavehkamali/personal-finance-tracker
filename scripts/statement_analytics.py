@@ -326,8 +326,16 @@ def _smart_credit_category(description: object) -> str:
         return "Personal E-Transfers"
     if "cra-rev" in text or "tax" in text:
         return "Taxes"
-    if "mortgage payment" in text or "loan payment" in text or "term loan" in text or "loan interest" in text:
-        return "Mortgage, Loans & Debt"
+    if "mortgage payment" in text:
+        return "Mortgage Payments"
+    if "loan payment" in text:
+        return "Credit Line Principal Payments"
+    if "term loan" in text and "toyota" in text:
+        return "Auto Loan - Toyota"
+    if "term loan" in text:
+        return "Loan Payments"
+    if "loan interest" in text:
+        return "Loan Interest"
     if "insurance" in text or "belair" in text or "rbcins" in text or "all life" in text:
         return "Utilities & Insurance"
     if "bill payment" in text or "utility bill" in text or "misc payment alectra" in text or "enbridge" in text:
@@ -361,6 +369,12 @@ def _is_internal_inflow(description: object) -> bool:
         or "online transfer to deposit account" in text
         or "kaveh kamali" in text
     )
+
+
+def _is_credit_line_principal_movement(description: object) -> bool:
+    text = str(description or "").lower()
+    text = " ".join(text.split())
+    return "online banking loan payment" in text or "www pmt" in text
 
 
 def _income_source(description: object) -> str:
@@ -769,6 +783,11 @@ def build_analytics(audit_dir: Path, output_dir: Path) -> dict[str, object]:
         len(complete_credit_month_set),
     )
     all_spend_total = _money(all_spend["expense_amount"].sum()) if not all_spend.empty else 0.0
+    external_spend = all_spend[
+        ~all_spend["description"].map(_is_credit_line_principal_movement)
+    ].copy() if not all_spend.empty else all_spend
+    external_spend_total = _money(external_spend["expense_amount"].sum()) if not external_spend.empty else 0.0
+    credit_line_principal_total = _money(all_spend_total - external_spend_total)
     all_spend_debit_total = (
         _money(all_spend.loc[all_spend["spend_source"].eq("debit_bank"), "expense_amount"].sum())
         if not all_spend.empty
@@ -786,6 +805,8 @@ def build_analytics(audit_dir: Path, output_dir: Path) -> dict[str, object]:
         ),
         "months_included": ", ".join(sorted(complete_credit_month_set)),
         "total_expense": all_spend_total,
+        "external_expense_excluding_credit_line_principal": external_spend_total,
+        "credit_line_principal_payments": credit_line_principal_total,
         "credit_card_expense": all_spend_credit_total,
         "debit_bank_expense": all_spend_debit_total,
         "avg_monthly_total_expense": _money(all_spend_total / max(1, len(complete_credit_month_set))),

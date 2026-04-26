@@ -9,6 +9,7 @@ not use OCR, and does not apply dashboard categorization.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import sys
 from collections import defaultdict
@@ -106,6 +107,42 @@ def _parse_statement(path: Path) -> pd.DataFrame:
     if path.suffix.lower() == ".md":
         return parse_rbc_markdown(path)
     raise ValueError(f"Unsupported extension {path.suffix!r}")
+
+
+def _file_digest(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _statement_file_inventory(raw_files: list[Path], selected_files: list[Path]) -> pd.DataFrame:
+    from personal_finance.statement_coverage import logical_statement_stem
+
+    selected = {p.resolve() for p in selected_files}
+    digest_counts: dict[str, int] = defaultdict(int)
+    logical_counts: dict[str, int] = defaultdict(int)
+    rows: list[dict[str, object]] = []
+    for path in raw_files:
+        logical_key = logical_statement_stem(unquote(path.stem))
+        digest = _file_digest(path)
+        digest_counts[digest] += 1
+        logical_counts[logical_key] += 1
+        rows.append(
+            {
+                "filename": unquote(path.name),
+                "source_path": str(path),
+                "logical_statement_key": logical_key,
+                "sha256": digest,
+                "selected_for_audit": path.resolve() in selected,
+            }
+        )
+    for row in rows:
+        row["same_content_file_count"] = digest_counts[str(row["sha256"])]
+        row["same_logical_statement_count"] = logical_counts[str(row["logical_statement_key"])]
+        row["ignored_duplicate_copy"] = not bool(row["selected_for_audit"])
+    return pd.DataFrame(rows).sort_values(["logical_statement_key", "filename"])
 
 
 def _extract_all(files: list[Path], output_dir: Path) -> tuple[list[dict[str, object]], dict[str, str]]:
@@ -323,11 +360,12 @@ def main() -> int:
     output_dir = (args.output_dir or (input_dir / "statement_audit")).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    files = sorted(
+    raw_files = sorted(
         p
         for p in input_dir.iterdir()
         if p.is_file() and p.suffix.lower() in {".pdf", ".md"}
     )
+    files = raw_files
     if not args.include_duplicates:
         files = _dedupe_statement_files(files)
 
@@ -340,10 +378,12 @@ def main() -> int:
     coverage_df, account_df = _coverage_rows(reconcile_rows)
 
     extraction_path = output_dir / "statement_extraction.csv"
+    inventory_path = output_dir / "statement_file_inventory.csv"
     reconcile_path = output_dir / "statement_reconciliation.csv"
     coverage_path = output_dir / "account_month_coverage.csv"
     account_path = output_dir / "account_summary.csv"
 
+    _statement_file_inventory(raw_files, files).to_csv(inventory_path, index=False)
     pd.DataFrame(extract_rows).to_csv(extraction_path, index=False)
     pd.DataFrame(reconcile_rows).to_csv(reconcile_path, index=False)
     coverage_df.to_csv(coverage_path, index=False)
@@ -362,6 +402,7 @@ def main() -> int:
     print(f"Accounts with middle-month gaps: {middle_gap_n}")
     print(f"Statement total checks: ok={reconcile_ok_n}, not_ok={len(reconcile_rows) - reconcile_ok_n}")
     print(f"CSV statements and reports: {output_dir}")
+    print(f"- {inventory_path.name}")
     print(f"- {extraction_path.name}")
     print(f"- {reconcile_path.name}")
     print(f"- {coverage_path.name}")
