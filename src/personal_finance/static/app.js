@@ -190,7 +190,7 @@ function setKpis(data) {
 
 function renderCategoryChart(data) {
   const rows = (data.spend?.summary || []).slice().sort((a, b) => asNumber(a.total_expense) - asNumber(b.total_expense));
-  $("category-chart").style.height = `${Math.max(420, rows.length * 30)}px`;
+  $("category-chart").style.height = `${Math.max(500, rows.length * 34)}px`;
   const trace = {
     type: "bar",
     orientation: "h",
@@ -198,18 +198,21 @@ function renderCategoryChart(data) {
     y: rows.map((row) => row.category),
     marker: { color: rows.map((_, i) => colors[i % colors.length]) },
     customdata: rows.map((row) => row.category),
+    text: rows.map((row) => fmtMoney(row.total_expense)),
+    textposition: "outside",
+    cliponaxis: false,
     hovertemplate: "%{y}<br>%{x:$,.2f}<extra></extra>",
   };
   Plotly.newPlot(
     "category-chart",
     [trace],
     {
-      margin: { l: 180, r: 20, t: 10, b: 36 },
+      margin: { l: 230, r: 96, t: 10, b: 42 },
       paper_bgcolor: "rgba(0,0,0,0)",
       plot_bgcolor: "rgba(0,0,0,0)",
-      xaxis: { tickprefix: "$", gridcolor: "rgba(15,23,42,.09)" },
-      yaxis: { fixedrange: true, automargin: true },
-      font: { family: "Inter, sans-serif", color: "#344054" },
+      xaxis: { tickprefix: "$", gridcolor: "rgba(15,23,42,.09)", automargin: true },
+      yaxis: { fixedrange: true, automargin: true, tickfont: { size: 12 } },
+      font: { family: "Inter, sans-serif", color: "#344054", size: 12 },
     },
     { responsive: true, displaylogo: false }
   );
@@ -242,6 +245,45 @@ function renderIncomeChart(data) {
     },
     { responsive: true, displaylogo: false }
   );
+}
+
+function renderOutputChart(data) {
+  const rows = data.output?.check_by_month || [];
+  const months = rows.map((r) => r.statement_month);
+  Plotly.newPlot(
+    "output-chart",
+    [
+      { type: "bar", name: "Statement out", x: months, y: rows.map((r) => asNumber(r.statement_out)), marker: { color: "#0f766e" } },
+      { type: "bar", name: "Parsed out", x: months, y: rows.map((r) => asNumber(r.parsed_out)), marker: { color: "#2563eb" } },
+      {
+        type: "scatter",
+        mode: "lines+markers",
+        name: "Diff",
+        x: months,
+        y: rows.map((r) => asNumber(r.diff_out)),
+        yaxis: "y2",
+        line: { color: "#e11d48", width: 2 },
+        marker: { size: 7 },
+      },
+    ],
+    {
+      barmode: "group",
+      margin: { l: 54, r: 44, t: 8, b: 36 },
+      paper_bgcolor: "rgba(0,0,0,0)",
+      plot_bgcolor: "rgba(0,0,0,0)",
+      yaxis: { tickprefix: "$", gridcolor: "rgba(15,23,42,.09)" },
+      yaxis2: { overlaying: "y", side: "right", tickprefix: "$", zeroline: true, gridcolor: "rgba(0,0,0,0)" },
+      xaxis: { type: "category" },
+      legend: { orientation: "h", y: -0.22 },
+      font: { family: "Inter, sans-serif", color: "#344054" },
+    },
+    { responsive: true, displaylogo: false }
+  );
+  $("output-chart").on("plotly_click", (event) => {
+    const point = event.points?.[0];
+    if (!point) return;
+    showOutputDetails(String(point.x));
+  });
 }
 
 function renderIncomeTable(data) {
@@ -462,6 +504,7 @@ function render(data) {
   setKpis(data);
   renderCategoryChart(data);
   renderIncomeChart(data);
+  renderOutputChart(data);
   renderIncomeTable(data);
   renderOutputCheckTable(data);
   renderMonthCategoryTable(data);
