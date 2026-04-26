@@ -81,6 +81,43 @@ def _sum_rows(rows: list[dict[str, object]], key: str) -> float:
     return round(total, 2)
 
 
+def _output_check_by_month(reconciliation: list[dict[str, object]]) -> list[dict[str, object]]:
+    monthly: dict[str, dict[str, object]] = {}
+    for row in reconciliation:
+        if row.get("account_kind") == "credit_line":
+            continue
+        month = str(row.get("statement_month") or "")
+        if not month:
+            continue
+        current = monthly.setdefault(
+            month,
+            {
+                "statement_month": month,
+                "statement_out": 0.0,
+                "parsed_out": 0.0,
+                "diff_out": 0.0,
+                "statement_count": 0,
+                "mismatch_count": 0,
+            },
+        )
+        current["statement_count"] = int(current["statement_count"]) + 1
+        if not bool(row.get("reconcile_ok")):
+            current["mismatch_count"] = int(current["mismatch_count"]) + 1
+        for key in ("statement_out", "parsed_out", "diff_out"):
+            try:
+                current[key] = float(current[key]) + float(row.get(key) or 0)
+            except (TypeError, ValueError):
+                continue
+
+    rows = []
+    for row in sorted(monthly.values(), key=lambda item: str(item["statement_month"])):
+        row = row.copy()
+        for key in ("statement_out", "parsed_out", "diff_out"):
+            row[key] = round(float(row[key]), 2)
+        rows.append(row)
+    return rows
+
+
 def _safe_input_filename(name: str) -> str:
     raw = Path(name or "statement").name
     safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", raw).strip()
@@ -104,6 +141,7 @@ def _audit_dashboard_payload() -> dict[str, object]:
     credit_by_month = _records_from_csv(ANALYTICS_DIR / "credit_card_expenses_by_month.csv")
     income_check = _records_from_csv(ANALYTICS_DIR / "income_cash_in_check_by_month.csv")
     income_by_source = _records_from_csv(ANALYTICS_DIR / "income_cash_in_by_source.csv")
+    output_check = _output_check_by_month(reconciliation)
 
     failed_reconciliation = [row for row in reconciliation if not bool(row.get("reconcile_ok"))]
     ignored_duplicate_files = [row for row in file_inventory if bool(row.get("ignored_duplicate_copy"))]
@@ -164,6 +202,9 @@ def _audit_dashboard_payload() -> dict[str, object]:
         "income": {
             "check_by_month": income_check,
             "by_source": income_by_source,
+        },
+        "output": {
+            "check_by_month": output_check,
         },
     }
 

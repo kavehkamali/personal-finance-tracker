@@ -257,30 +257,21 @@ function renderIncomeTable(data) {
   ]);
 }
 
-function renderSpendSplitTable(data) {
-  const ov = data.overview || {};
-  const rows = [
-    {
-      line: "External spend",
-      amount: ov.external_spend,
-      notes: "Own-account transfers removed; refunds deducted by category",
-    },
-    {
-      line: "Credit cards",
-      amount: ov.credit_card_expense,
-      notes: "Visa and MasterCard purchase/debit activity",
-    },
-    {
-      line: "Debit bank spend",
-      amount: ov.debit_bank_expense,
-      notes: "Chequing debit outflows after own transfers removed",
-    },
-  ];
-  $("spend-split-table").innerHTML = rowsToTable(rows, [
-    { key: "line", label: "Line" },
-    { key: "amount", label: "Amount", money: true, align: "right" },
-    { key: "notes", label: "Treatment" },
-  ]);
+function renderOutputCheckTable(data) {
+  const rows = data.output?.check_by_month || [];
+  const container = $("output-check-table");
+  renderSortableTable(
+    container,
+    rows,
+    [
+      { key: "statement_month", label: "Month" },
+      { key: "statement_out", label: "Statement out", money: true, align: "right" },
+      { key: "parsed_out", label: "Parsed out", money: true, align: "right" },
+      { key: "diff_out", label: "Diff", money: true, align: "right" },
+      { key: "mismatch_count", label: "Mismatches", number: true, align: "right" },
+    ],
+    { onRowClick: (row) => showOutputDetails(row.statement_month) }
+  );
 }
 
 function renderMonthCategoryTable(data) {
@@ -398,6 +389,25 @@ function showAuditDetails(row) {
   revealDetails();
 }
 
+function showOutputDetails(month) {
+  const rows = (dashboard.audit?.failed_reconciliation || [])
+    .filter((row) => row.account_kind !== "credit_line")
+    .filter((row) => row.statement_month === month)
+    .sort((a, b) => Math.abs(asNumber(b.diff_out)) - Math.abs(asNumber(a.diff_out)));
+  const totalDiff = rows.reduce((sum, row) => sum + asNumber(row.diff_out), 0);
+  $("detail-title").textContent = `Output check: ${month}`;
+  $("detail-subtitle").textContent = `${rows.length} mismatched statements · ${fmtMoney(totalDiff)} outflow difference`;
+  renderSortableDetailTable(rows, [
+    { key: "filename", label: "Statement" },
+    { key: "account_key", label: "Account" },
+    { key: "statement_out", label: "Statement out", money: true, align: "right" },
+    { key: "parsed_out", label: "Parsed out", money: true, align: "right" },
+    { key: "diff_out", label: "Diff", money: true, align: "right" },
+    { key: "notes", label: "Notes" },
+  ]);
+  revealDetails();
+}
+
 function showCategoryDetails(category, month = null) {
   selectedCategory = category;
   const rows = (dashboard.spend?.transactions || [])
@@ -453,7 +463,7 @@ function render(data) {
   renderCategoryChart(data);
   renderIncomeChart(data);
   renderIncomeTable(data);
-  renderSpendSplitTable(data);
+  renderOutputCheckTable(data);
   renderMonthCategoryTable(data);
   renderRefundsTable(data);
   renderAuditTable(data);
