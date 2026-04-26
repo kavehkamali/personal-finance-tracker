@@ -48,7 +48,7 @@
           <span>Company payroll only</span>
         </article>
         <article class="metric-card">
-          <span class="metric-label">EL payroll</span>
+          <span class="metric-label">EI / EL payroll</span>
           <strong id="kpi-el">...</strong>
           <span id="kpi-income-diff">Separated from LG</span>
         </article>
@@ -101,14 +101,26 @@
         <div id="month-category-table" class="table-wrap"></div>
       </section>
 
+      <section class="panel detail-panel" id="selected-detail-panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="detail-title">Click a Row for Details</h2>
+            <p id="detail-subtitle">Click any category row above, audit row below, or chart bar to show the full line-item list here.</p>
+          </div>
+          <button class="btn btn-secondary btn-small" id="clear-detail-btn" type="button">Clear</button>
+        </div>
+        <div id="detail-table" class="table-wrap table-wrap-sm"></div>
+      </section>
+
       <section class="grid grid-two">
         <article class="panel">
           <div class="panel-head">
             <div>
               <h2>Income Check</h2>
-              <p>LG, EL, external cash-in, and unmatched cash-in by month.</p>
+              <p>LG and EI / EL are separate in both the graph and the table.</p>
             </div>
           </div>
+          <div id="income-chart" class="chart chart-income"></div>
           <div id="income-table" class="compact-table"></div>
         </article>
 
@@ -126,37 +138,14 @@
       <section class="panel">
         <div class="panel-head">
           <div>
-            <h2>Category Totals</h2>
-            <p>Sorted by total over the complete months.</p>
+            <h2>Audit Details</h2>
+            <p>Click an audit row to show its full fields in the selected detail panel above.</p>
           </div>
         </div>
-        <div id="category-table" class="table-wrap"></div>
+        <div id="audit-table" class="table-wrap table-wrap-sm"></div>
       </section>
 
-      <section class="grid grid-two">
-        <article class="panel">
-          <div class="panel-head">
-            <div>
-              <h2>Audit Details</h2>
-              <p>Statement gaps and reconciliation issues.</p>
-            </div>
-          </div>
-          <div id="audit-table" class="table-wrap table-wrap-sm"></div>
-        </article>
-
-        <article class="panel detail-panel">
-          <div class="panel-head">
-            <div>
-              <h2 id="detail-title">Details</h2>
-              <p id="detail-subtitle">Select a category, audit status, or chart segment.</p>
-            </div>
-            <button class="btn btn-secondary btn-small" id="clear-detail-btn" type="button">Clear</button>
-          </div>
-          <div id="detail-table" class="table-wrap table-wrap-sm"></div>
-        </article>
-      </section>
-
-      <section class="grid grid-two charts-secondary">
+      <section class="charts-secondary">
         <article class="panel">
           <div class="panel-head">
             <div>
@@ -165,16 +154,6 @@
             </div>
           </div>
           <div id="category-chart" class="chart chart-compact"></div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <div>
-              <h2>Income Visual</h2>
-              <p>Secondary visual for monthly cash-in comparison.</p>
-            </div>
-          </div>
-          <div id="income-chart" class="chart chart-compact"></div>
         </article>
       </section>
     </main>

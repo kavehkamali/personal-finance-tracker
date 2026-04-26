@@ -259,6 +259,11 @@ p {
   height: 250px;
 }
 
+.chart-income {
+  height: 280px;
+  margin-bottom: 12px;
+}
+
 .chart-compact {
   height: 300px;
 }
@@ -322,13 +327,26 @@ tbody tr[tabindex]:hover {
   background: var(--soft);
 }
 
+tbody tr.selected-row {
+  background: #e8f3ff;
+  outline: 2px solid rgba(31, 111, 235, 0.22);
+  outline-offset: -2px;
+}
+
 .empty {
   padding: 18px;
   color: var(--muted);
 }
 
 .detail-panel {
-  min-height: 520px;
+  min-height: 220px;
+  margin-top: 14px;
+  border-color: #b8cfe6;
+}
+
+.detail-panel.detail-active {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(31, 111, 235, 0.12), var(--shadow);
 }
 
 @media (max-width: 1100px) {

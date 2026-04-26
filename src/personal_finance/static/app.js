@@ -83,11 +83,21 @@ function rowsToTable(rows, columns, { rowClick } = {}) {
 function attachRowClicks(container, rows, callback) {
   if (!container || !callback) return;
   container.querySelectorAll("tbody tr").forEach((tr) => {
-    tr.addEventListener("click", () => callback(rows[Number(tr.dataset.rowIndex)]));
+    tr.addEventListener("click", () => {
+      container.querySelectorAll("tbody tr").forEach((row) => row.classList.remove("selected-row"));
+      tr.classList.add("selected-row");
+      callback(rows[Number(tr.dataset.rowIndex)]);
+    });
     tr.addEventListener("keydown", (event) => {
       if (event.key === "Enter") callback(rows[Number(tr.dataset.rowIndex)]);
     });
   });
+}
+
+function revealDetails() {
+  const panel = $("selected-detail-panel");
+  panel.classList.add("detail-active");
+  panel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function pivotCategories(rows) {
@@ -106,7 +116,7 @@ function setKpis(data) {
   $("kpi-lg").textContent = fmtMoney(ov.lg_payroll);
   $("kpi-el").textContent = fmtMoney(ov.el_payroll);
   $("kpi-months").textContent = `Months: ${ov.months_included || "not available"}`;
-  $("kpi-income-diff").textContent = `${fmtMoney(ov.payroll_external_diff)} external cash-in not matched to LG/EL payroll`;
+  $("kpi-income-diff").textContent = `${fmtMoney(ov.payroll_external_diff)} external cash-in not matched to LG + EI/EL payroll`;
   $("audit-middle-gaps").textContent = ov.middle_gap_count ?? 0;
   $("audit-failed").textContent = ov.failed_reconciliation_count ?? 0;
   $("audit-partial").textContent = ov.partial_or_missing_count ?? 0;
@@ -153,7 +163,7 @@ function renderIncomeChart(data) {
     [
       { type: "bar", name: "External cash-in", x: months, y: rows.map((r) => asNumber(r.external_cash_in)), marker: { color: "#0f766e" } },
       { type: "bar", name: "LG payroll", x: months, y: rows.map((r) => asNumber(r.lg_payroll)), marker: { color: "#1f6feb" } },
-      { type: "bar", name: "EL payroll", x: months, y: rows.map((r) => asNumber(r.el_unitytech_payroll)), marker: { color: "#c27c0e" } },
+      { type: "bar", name: "EI / EL payroll", x: months, y: rows.map((r) => asNumber(r.el_unitytech_payroll)), marker: { color: "#c27c0e" } },
     ],
     {
       barmode: "group",
@@ -162,7 +172,7 @@ function renderIncomeChart(data) {
       plot_bgcolor: "rgba(0,0,0,0)",
       yaxis: { tickprefix: "$", gridcolor: "rgba(15,23,42,.09)" },
       xaxis: { type: "category" },
-      legend: { orientation: "h", y: -0.24 },
+      legend: { orientation: "h", y: -0.22 },
       font: { family: "Inter, sans-serif", color: "#334155" },
     },
     { responsive: true, displaylogo: false }
@@ -175,8 +185,8 @@ function renderIncomeTable(data) {
     { key: "statement_month", label: "Month" },
     { key: "external_cash_in", label: "External in", money: true, align: "right" },
     { key: "lg_payroll", label: "LG", money: true, align: "right" },
-    { key: "el_unitytech_payroll", label: "EL", money: true, align: "right" },
-    { key: "lg_plus_el_payroll", label: "LG + EL", money: true, align: "right" },
+    { key: "el_unitytech_payroll", label: "EI / EL", money: true, align: "right" },
+    { key: "lg_plus_el_payroll", label: "LG + EI/EL", money: true, align: "right" },
     { key: "excluded_internal_cash_in", label: "Excluded internal", money: true, align: "right" },
     { key: "payroll_vs_external_cash_in_diff", label: "Unmatched external", money: true, align: "right" },
   ]);
@@ -211,18 +221,6 @@ function renderSpendSplitTable(data) {
     { key: "amount", label: "Amount", money: true, align: "right" },
     { key: "notes", label: "Treatment" },
   ]);
-}
-
-function renderCategoryTable(data) {
-  const rows = data.spend?.summary || [];
-  const container = $("category-table");
-  container.innerHTML = rowsToTable(rows, [
-    { key: "category", label: "Category" },
-    { key: "total_expense", label: "Total", money: true, align: "right" },
-    { key: "share_of_total", label: "Share %", number: true, align: "right" },
-    { key: "transaction_count", label: "Tx", number: true, align: "right" },
-  ], { rowClick: true });
-  attachRowClicks(container, rows, (row) => showCategoryDetails(row.category));
 }
 
 function renderMonthCategoryTable(data) {
@@ -311,6 +309,7 @@ function showAuditDetails(row) {
     { key: "field", label: "Field" },
     { key: "value", label: "Value" },
   ]);
+  revealDetails();
 }
 
 function showCategoryDetails(category, month = null) {
@@ -330,12 +329,14 @@ function showCategoryDetails(category, month = null) {
     { key: "description", label: "Description" },
     { key: "amount", label: "Amount", money: true, align: "right" },
   ]);
+  revealDetails();
 }
 
 function clearDetails() {
   selectedCategory = null;
-  $("detail-title").textContent = "Details";
-  $("detail-subtitle").textContent = "Select a category, audit status, or chart segment.";
+  $("selected-detail-panel").classList.remove("detail-active");
+  $("detail-title").textContent = "Click a Row for Details";
+  $("detail-subtitle").textContent = "Click any category row above, audit row below, or chart bar to show the full line-item list here.";
   $("detail-table").innerHTML = `<div class="empty">No selection yet.</div>`;
 }
 
@@ -347,7 +348,6 @@ function render(data) {
   renderIncomeTable(data);
   renderSpendSplitTable(data);
   renderMonthCategoryTable(data);
-  renderCategoryTable(data);
   renderAuditTable(data);
   clearDetails();
 }
@@ -414,8 +414,8 @@ document.addEventListener("DOMContentLoaded", () => {
     button.addEventListener("click", () => {
       renderAuditTable(dashboard, button.dataset.detail);
       $("detail-title").textContent = button.querySelector("span")?.textContent || "Audit";
-      $("detail-subtitle").textContent = "Audit table updated.";
-      $("detail-table").innerHTML = `<div class="empty">Use the audit table on the left.</div>`;
+      $("detail-subtitle").textContent = "Audit table updated below. Click one audit row to show all fields here.";
+      $("detail-table").innerHTML = `<div class="empty">Click an audit row below to show the full detail list here.</div>`;
     });
   });
   loadDashboard();
