@@ -138,6 +138,158 @@ def _output_check_by_month(spend_transactions: list[dict[str, object]]) -> list[
     return rows
 
 
+def _recurring_label(description: object, category: object) -> str | None:
+    text = " ".join(str(description or "").lower().split())
+    cat = str(category or "")
+    rules = (
+        ("mortgage payment", "Mortgage payment"),
+        ("term loan toyota finance", "Toyota finance"),
+        ("loan interest", "Loan interest"),
+        ("monthly fee", "Monthly fee"),
+        ("bell mobility", "Bell Mobility"),
+        ("reliance home comfort", "Reliance Home Comfort"),
+        ("insurance cie belair", "Belair insurance"),
+        ("insurance belair", "Belair insurance"),
+        ("belair ins", "Belair insurance"),
+        ("rbcins-life", "RBC life insurance"),
+        ("rbcins", "RBC life insurance"),
+        ("all life", "All Life insurance"),
+        ("alectra", "Alectra"),
+        ("enbridge", "Enbridge Gas"),
+        ("hydro-quebec", "Hydro Quebec"),
+        ("videotron", "Videotron"),
+        ("netflix", "Netflix"),
+        ("spotify", "Spotify"),
+        ("apple.com/bill", "Apple billing"),
+        ("google one", "Google One"),
+        ("amazon.ca prime", "Amazon Prime"),
+        ("brain power", "Brain Power"),
+        ("townrichmondhill", "Town Richmond Hill"),
+        ("act*townrichmondhill", "Town Richmond Hill"),
+    )
+    for needle, label in rules:
+        if needle in text:
+            return label
+    if cat not in {
+        "Mortgage Payments",
+        "Auto Loan - Toyota",
+        "Loan Interest",
+        "Bank Fees & Interest",
+        "Utilities & Insurance",
+        "Kids Education & Activities",
+        "Subscriptions & Digital",
+    }:
+        return None
+    cleaned = re.sub(r"\b\d+([\.-]\d+)?\b", "", text)
+    cleaned = re.sub(r"[^a-z& ]+", " ", cleaned)
+    cleaned = " ".join(cleaned.split())
+    return cleaned.title() if cleaned else None
+
+
+def _recurring_payments(spend_transactions: list[dict[str, object]]) -> dict[str, list[dict[str, object]]]:
+    if not spend_transactions:
+        return {"summary": [], "transactions": []}
+
+    df = pd.DataFrame(spend_transactions)
+    if df.empty:
+        return {"summary": [], "transactions": []}
+    df["amount_num"] = pd.to_numeric(df.get("amount"), errors="coerce").fillna(0.0)
+    df = df[df["amount_num"] > 0].copy()
+    if df.empty:
+        return {"summary": [], "transactions": []}
+
+    df["recurring_label"] = [
+        _recurring_label(desc, cat)
+        for desc, cat in zip(df.get("description", ""), df.get("category", ""))
+    ]
+    df = df[df["recurring_label"].notna()].copy()
+    if df.empty:
+        return {"summary": [], "transactions": []}
+
+    df["recurring_key"] = (
+        df["category"].astype(str).str.lower().str.replace(r"[^a-z0-9]+", "-", regex=True).str.strip("-")
+        + "::"
+        + df["recurring_label"].astype(str).str.lower().str.replace(r"[^a-z0-9]+", "-", regex=True).str.strip("-")
+    )
+    months = sorted(df["statement_month"].astype(str).dropna().unique().tolist())
+    summary_rows: list[dict[str, object]] = []
+    kept_keys: set[str] = set()
+    for key, grp in df.groupby("recurring_key", dropna=False):
+        month_totals = grp.groupby("statement_month")["amount_num"].sum()
+        months_seen = sorted(month_totals.index.astype(str).tolist())
+        if len(months_seen) < 2:
+            continue
+        label = str(grp["recurring_label"].iloc[0])
+        category = str(grp["category"].iloc[0])
+        total_paid = float(grp["amount_num"].sum())
+        avg_seen = total_paid / max(1, len(months_seen))
+        missing = [month for month in months if month not in months_seen]
+        possible_late = []
+        for idx, month in enumerate(months[:-1]):
+            next_month = months[idx + 1]
+            if month in missing and float(month_totals.get(next_month, 0.0)) > avg_seen * 1.45:
+                possible_late.append(f"{month}->{next_month}")
+        transaction_dates = pd.to_datetime(grp.get("transaction_date"), errors="coerce").dropna().sort_values()
+        if len(transaction_dates) >= 3:
+            median_gap = float(transaction_dates.diff().dt.days.dropna().median())
+            cadence = "biweekly/weekly" if median_gap <= 18 else "monthly"
+        else:
+            cadence = "monthly"
+        expected_total = avg_seen * len(months) if cadence == "monthly" else total_paid
+        variance = total_paid - expected_total
+        values = [float(month_totals.get(month, 0.0)) for month in months_seen]
+        high_variance = bool(values and min(values) > 0 and max(values) / min(values) > 1.6)
+        notes = []
+        if missing:
+            notes.append("missing month")
+        if possible_late:
+            notes.append("possible late/catch-up")
+        if high_variance:
+            notes.append("variable amount")
+        kept_keys.add(str(key))
+        row = {
+            "recurring_key": str(key),
+            "label": label,
+            "category": category,
+            "cadence": cadence,
+            "months_seen": ", ".join(months_seen),
+            "missing_months": ", ".join(missing),
+            "possible_late": ", ".join(possible_late),
+            "transaction_count": int(len(grp)),
+            "total_paid": round(total_paid, 2),
+            "avg_paid_when_seen": round(avg_seen, 2),
+            "expected_total_if_monthly": round(expected_total, 2),
+            "variance_vs_expected": round(variance, 2),
+            "notes": ", ".join(notes) if notes else "ok",
+        }
+        for month in months:
+            row[month] = round(float(month_totals.get(month, 0.0)), 2)
+        summary_rows.append(row)
+
+    summary_rows = sorted(
+        summary_rows,
+        key=lambda row: (row["notes"] == "ok", -float(row["total_paid"])),
+    )
+    detail_cols = [
+        "recurring_key",
+        "recurring_label",
+        "statement_month",
+        "source_statement_month",
+        "account_key",
+        "spend_source",
+        "transaction_date",
+        "description",
+        "amount",
+        "category",
+        "source_statement",
+    ]
+    details = df[df["recurring_key"].astype(str).isin(kept_keys)].copy()
+    details["amount"] = details["amount_num"].map(lambda value: round(float(value), 2))
+    details = details[[col for col in detail_cols if col in details.columns]]
+    details = details.where(pd.notna(details), None)
+    return {"summary": summary_rows, "transactions": details.to_dict(orient="records")}
+
+
 def _safe_input_filename(name: str) -> str:
     raw = Path(name or "statement").name
     safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", raw).strip()
@@ -162,6 +314,7 @@ def _audit_dashboard_payload() -> dict[str, object]:
     income_check = _records_from_csv(ANALYTICS_DIR / "income_cash_in_check_by_month.csv")
     income_by_source = _records_from_csv(ANALYTICS_DIR / "income_cash_in_by_source.csv")
     output_check = _output_check_by_month(all_spend_transactions)
+    recurring = _recurring_payments(all_spend_transactions)
 
     failed_reconciliation = [row for row in reconciliation if not bool(row.get("reconcile_ok"))]
     ignored_duplicate_files = [row for row in file_inventory if bool(row.get("ignored_duplicate_copy"))]
@@ -190,10 +343,11 @@ def _audit_dashboard_payload() -> dict[str, object]:
             "debit_bank_expense": float(all_spend_totals.get("debit_bank_expense") or 0),
             "months_included": str(all_spend_totals.get("months_included") or credit_summary.get("months_included") or ""),
             "lg_payroll": float(income_total.get("lg_payroll") or 0),
-            "el_payroll": float(income_total.get("el_unitytech_payroll") or 0),
-            "lg_plus_el_payroll": float(income_total.get("lg_plus_el_payroll") or 0),
+            "unity_final_payroll": float(income_total.get("unity_final_payroll") or 0),
+            "ei_canada": float(income_total.get("ei_canada") or 0),
+            "tracked_income": float(income_total.get("tracked_income") or 0),
             "external_cash_in": float(income_total.get("external_cash_in") or 0),
-            "payroll_external_diff": float(income_total.get("payroll_vs_external_cash_in_diff") or 0),
+            "income_unmatched_external": float(income_total.get("tracked_income_vs_external_cash_in_diff") or 0),
         },
         "audit": {
             "account_summary": account_summary,
@@ -226,6 +380,7 @@ def _audit_dashboard_payload() -> dict[str, object]:
         "output": {
             "check_by_month": output_check,
         },
+        "recurring": recurring,
     }
 
 

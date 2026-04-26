@@ -405,7 +405,7 @@ def _income_source(description: object) -> str:
     if "payroll deposit lg electronics" in text:
         return "LG Electronics"
     if "payroll deposit unitytechcan-os" in text or "payroll deposit unitytech" in text:
-        return "EL / UnityTechCAN-OS"
+        return "UnityTech final payroll"
     if "payroll deposit" in text:
         return "Other Payroll"
     if "ei canada" in text:
@@ -440,7 +440,8 @@ def _income_check(rows: pd.DataFrame, complete_months: set[str]) -> tuple[pd.Dat
     inflow["income_source"] = inflow["description"].map(_income_source)
     inflow["is_internal_inflow"] = inflow["description"].map(_is_internal_inflow)
     inflow["is_lg_payroll"] = inflow["income_source"].eq("LG Electronics")
-    inflow["is_el_payroll"] = inflow["income_source"].eq("EL / UnityTechCAN-OS")
+    inflow["is_unity_final_payroll"] = inflow["income_source"].eq("UnityTech final payroll")
+    inflow["is_ei_canada"] = inflow["income_source"].eq("EI Canada")
 
     rows_out: list[dict[str, object]] = []
     for month in sorted(complete_months):
@@ -449,8 +450,9 @@ def _income_check(rows: pd.DataFrame, complete_months: set[str]) -> tuple[pd.Dat
         internal_cash_in = float(grp.loc[grp["is_internal_inflow"], "amount"].sum())
         external_cash_in = total_cash_in - internal_cash_in
         lg = float(grp.loc[grp["is_lg_payroll"], "amount"].sum())
-        el = float(grp.loc[grp["is_el_payroll"], "amount"].sum())
-        payroll = lg + el
+        unity = float(grp.loc[grp["is_unity_final_payroll"], "amount"].sum())
+        ei = float(grp.loc[grp["is_ei_canada"], "amount"].sum())
+        tracked_income = lg + unity + ei
         rows_out.append(
             {
                 "statement_month": month,
@@ -458,10 +460,11 @@ def _income_check(rows: pd.DataFrame, complete_months: set[str]) -> tuple[pd.Dat
                 "excluded_internal_cash_in": _money(internal_cash_in),
                 "external_cash_in": _money(external_cash_in),
                 "lg_payroll": _money(lg),
-                "el_unitytech_payroll": _money(el),
-                "lg_plus_el_payroll": _money(payroll),
-                "payroll_vs_total_cash_in_diff": _money(total_cash_in - payroll),
-                "payroll_vs_external_cash_in_diff": _money(external_cash_in - payroll),
+                "unity_final_payroll": _money(unity),
+                "ei_canada": _money(ei),
+                "tracked_income": _money(tracked_income),
+                "tracked_income_vs_total_cash_in_diff": _money(total_cash_in - tracked_income),
+                "tracked_income_vs_external_cash_in_diff": _money(external_cash_in - tracked_income),
             }
         )
 
@@ -472,10 +475,11 @@ def _income_check(rows: pd.DataFrame, complete_months: set[str]) -> tuple[pd.Dat
         "excluded_internal_cash_in": _money(by_month["excluded_internal_cash_in"].sum()),
         "external_cash_in": _money(by_month["external_cash_in"].sum()),
         "lg_payroll": _money(by_month["lg_payroll"].sum()),
-        "el_unitytech_payroll": _money(by_month["el_unitytech_payroll"].sum()),
-        "lg_plus_el_payroll": _money(by_month["lg_plus_el_payroll"].sum()),
-        "payroll_vs_total_cash_in_diff": _money(by_month["payroll_vs_total_cash_in_diff"].sum()),
-        "payroll_vs_external_cash_in_diff": _money(by_month["payroll_vs_external_cash_in_diff"].sum()),
+        "unity_final_payroll": _money(by_month["unity_final_payroll"].sum()),
+        "ei_canada": _money(by_month["ei_canada"].sum()),
+        "tracked_income": _money(by_month["tracked_income"].sum()),
+        "tracked_income_vs_total_cash_in_diff": _money(by_month["tracked_income_vs_total_cash_in_diff"].sum()),
+        "tracked_income_vs_external_cash_in_diff": _money(by_month["tracked_income_vs_external_cash_in_diff"].sum()),
     }
     by_month_with_total = pd.concat([by_month, pd.DataFrame([totals])], ignore_index=True)
 

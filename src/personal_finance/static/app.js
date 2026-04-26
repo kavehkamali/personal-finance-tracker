@@ -214,9 +214,9 @@ function setKpis(data) {
   $("kpi-credit").textContent = fmtMoney(ov.credit_card_expense);
   $("kpi-external-spend").textContent = fmtMoney(ov.external_spend);
   $("kpi-lg").textContent = fmtMoney(ov.lg_payroll);
-  $("kpi-el").textContent = fmtMoney(ov.el_payroll);
+  $("kpi-el").textContent = fmtMoney(ov.ei_canada);
   $("kpi-months").textContent = `Months: ${ov.months_included || "not available"}`;
-  $("kpi-income-diff").textContent = `${fmtMoney(ov.payroll_external_diff)} external cash-in not matched to LG + EI/EL payroll`;
+  $("kpi-income-diff").textContent = `${fmtMoney(ov.income_unmatched_external)} external cash-in not matched to LG + EI + Unity final`;
   $("audit-middle-gaps").textContent = ov.middle_gap_count ?? 0;
   $("audit-failed").textContent = ov.failed_reconciliation_count ?? 0;
   $("audit-partial").textContent = ov.partial_or_missing_count ?? 0;
@@ -319,7 +319,8 @@ function renderIncomeChart(data) {
     [
       { type: "bar", name: "External cash-in", x: months, y: rows.map((r) => asNumber(r.external_cash_in)), marker: { color: "#16a37a" } },
       { type: "bar", name: "LG payroll", x: months, y: rows.map((r) => asNumber(r.lg_payroll)), marker: { color: "#2563eb" } },
-      { type: "bar", name: "EI / EL payroll", x: months, y: rows.map((r) => asNumber(r.el_unitytech_payroll)), marker: { color: "#d97706" } },
+      { type: "bar", name: "EI Canada", x: months, y: rows.map((r) => asNumber(r.ei_canada)), marker: { color: "#d97706" } },
+      { type: "bar", name: "Unity final pay", x: months, y: rows.map((r) => asNumber(r.unity_final_payroll)), marker: { color: "#7c3aed" } },
     ],
     {
       barmode: "group",
@@ -370,10 +371,11 @@ function renderIncomeTable(data) {
     { key: "statement_month", label: "Month" },
     { key: "external_cash_in", label: "External in", money: true, align: "right" },
     { key: "lg_payroll", label: "LG", money: true, align: "right" },
-    { key: "el_unitytech_payroll", label: "EI / EL", money: true, align: "right" },
-    { key: "lg_plus_el_payroll", label: "LG + EI/EL", money: true, align: "right" },
+    { key: "ei_canada", label: "EI Canada", money: true, align: "right" },
+    { key: "unity_final_payroll", label: "Unity final", money: true, align: "right" },
+    { key: "tracked_income", label: "Tracked income", money: true, align: "right" },
     { key: "excluded_internal_cash_in", label: "Excluded internal", money: true, align: "right" },
-    { key: "payroll_vs_external_cash_in_diff", label: "Unmatched external", money: true, align: "right" },
+    { key: "tracked_income_vs_external_cash_in_diff", label: "Unmatched external", money: true, align: "right" },
   ]);
 }
 
@@ -462,6 +464,27 @@ function renderRefundsTable(data) {
   ];
   renderSortableTable($("refunds-table"), tableRows, columns, {
     onRowClick: (row) => showRefundDetails(row.category),
+  });
+}
+
+function renderRecurringTable(data) {
+  const rows = data.recurring?.summary || [];
+  const monthKeys = rows.length
+    ? Object.keys(rows[0]).filter((key) => /^\d{4}-\d{2}$/.test(key)).sort()
+    : [];
+  const columns = [
+    { key: "label", label: "Payment" },
+    { key: "category", label: "Category" },
+    { key: "cadence", label: "Cadence" },
+    ...monthKeys.map((month) => ({ key: month, label: month, money: true, align: "right" })),
+    { key: "total_paid", label: "Total", money: true, align: "right" },
+    { key: "avg_paid_when_seen", label: "Avg seen", money: true, align: "right" },
+    { key: "missing_months", label: "Missing" },
+    { key: "possible_late", label: "Late/catch-up" },
+    { key: "notes", label: "Status" },
+  ];
+  renderSortableTable($("recurring-table"), rows, columns, {
+    onRowClick: (row) => showRecurringDetails(row.recurring_key, row.label),
   });
 }
 
@@ -614,6 +637,24 @@ function showRefundDetails(category, month = null) {
   revealDetails();
 }
 
+function showRecurringDetails(key, label) {
+  const rows = (dashboard.recurring?.transactions || [])
+    .filter((row) => row.recurring_key === key)
+    .sort((a, b) => String(a.transaction_date || "").localeCompare(String(b.transaction_date || "")));
+  const total = rows.reduce((sum, row) => sum + asNumber(row.amount), 0);
+  $("detail-title").textContent = label;
+  $("detail-subtitle").textContent = `${rows.length} recurring transactions · ${fmtMoney(total)}`;
+  renderSortableDetailTable(rows, [
+    { key: "statement_month", label: "Month" },
+    { key: "transaction_date", label: "Date" },
+    { key: "account_key", label: "Account" },
+    { key: "description", label: "Description" },
+    { key: "category", label: "Category" },
+    { key: "amount", label: "Amount", money: true, align: "right" },
+  ]);
+  revealDetails();
+}
+
 function clearDetails() {
   selectedCategory = null;
   $("selected-detail-panel").classList.remove("detail-active");
@@ -632,6 +673,7 @@ function render(data) {
   renderOutputCheckTable(data);
   renderMonthCategoryTable(data);
   renderRefundsTable(data);
+  renderRecurringTable(data);
   renderAuditTable(data);
   clearDetails();
 }
