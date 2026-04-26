@@ -117,6 +117,17 @@
               <h2>Category Ranking</h2>
               <p>Click a bar to inspect the category transactions.</p>
             </div>
+            <div class="panel-actions">
+              <div class="segmented-control" aria-label="Category period">
+                <button class="segment is-active" id="category-period-total" type="button" data-category-period="total">Total</button>
+                <button class="segment" id="category-period-average" type="button" data-category-period="average">Average</button>
+              </div>
+              <select class="select-control" id="category-month-select" aria-label="Category month"></select>
+              <label class="toggle-control">
+                <input id="category-ensemble-toggle" type="checkbox" />
+                <span>Ensembles</span>
+              </label>
+            </div>
           </div>
           <div id="category-chart" class="chart chart-compact"></div>
         </article>

@@ -23,6 +23,33 @@ const colors = [
 
 let dashboard = null;
 let selectedCategory = null;
+let categoryPeriod = "total";
+let categoryMonth = "";
+let categoryUseEnsembles = false;
+
+const categoryEnsembles = new Map([
+  ["Mortgage Payments", "Housing & Debt"],
+  ["Auto Loan - Toyota", "Housing & Debt"],
+  ["Loan Interest", "Housing & Debt"],
+  ["Bank Fees & Interest", "Housing & Debt"],
+  ["Utilities & Insurance", "Bills, Insurance & Tax"],
+  ["Taxes", "Bills, Insurance & Tax"],
+  ["Government, IDs & Fees", "Bills, Insurance & Tax"],
+  ["Groceries", "Food & Household"],
+  ["Dining & Coffee", "Food & Household"],
+  ["Home, Pets & Household", "Food & Household"],
+  ["Kids Education & Activities", "Family & Education"],
+  ["Personal E-Transfers", "Family & Education"],
+  ["Shopping & Personal", "Shopping & Lifestyle"],
+  ["Marketplace / Amazon", "Shopping & Lifestyle"],
+  ["Health & Pharmacy", "Shopping & Lifestyle"],
+  ["Entertainment", "Shopping & Lifestyle"],
+  ["Subscriptions & Digital", "Shopping & Lifestyle"],
+  ["Travel & Vacation", "Travel & Auto"],
+  ["Fuel & Auto", "Travel & Auto"],
+  ["Cash Withdrawal", "Cash & Review"],
+  ["Other / Review", "Cash & Review"],
+]);
 
 function $(id) {
   return document.getElementById(id);
@@ -165,6 +192,10 @@ function pivotCategories(rows) {
   return { months, categories, lookup };
 }
 
+function categoryMonths(data) {
+  return [...new Set((data.spend?.by_month || []).map((row) => String(row.statement_month)))].sort();
+}
+
 function pivotRefunds(rows) {
   const months = [...new Set(rows.map((r) => String(r.statement_month)))].sort();
   const categories = [...new Set(rows.map((r) => String(r.category)))];
@@ -188,17 +219,69 @@ function setKpis(data) {
   $("audit-duplicates").textContent = `${ov.exact_duplicate_file_count ?? 0} / ${ov.ignored_duplicate_file_count ?? 0}`;
 }
 
+function buildCategoryChartRows(data) {
+  const months = categoryMonths(data);
+  const monthCount = Math.max(1, months.length);
+  let rows = [];
+  if (categoryPeriod === "month" && categoryMonth) {
+    rows = (data.spend?.by_month || [])
+      .filter((row) => row.statement_month === categoryMonth)
+      .map((row) => ({ label: row.category, value: asNumber(row.expense), categories: [row.category] }));
+  } else {
+    rows = (data.spend?.summary || []).map((row) => {
+      const total = asNumber(row.total_expense);
+      return {
+        label: row.category,
+        value: categoryPeriod === "average" ? total / monthCount : total,
+        categories: [row.category],
+      };
+    });
+  }
+
+  if (categoryUseEnsembles) {
+    const grouped = new Map();
+    rows.forEach((row) => {
+      const label = categoryEnsembles.get(row.label) || row.label;
+      const current = grouped.get(label) || { label, value: 0, categories: [] };
+      current.value += row.value;
+      current.categories.push(...row.categories);
+      grouped.set(label, current);
+    });
+    rows = [...grouped.values()].map((row) => ({
+      ...row,
+      categories: [...new Set(row.categories)],
+    }));
+  }
+
+  return rows.sort((a, b) => a.value - b.value);
+}
+
+function renderCategoryControls(data) {
+  const months = categoryMonths(data);
+  const select = $("category-month-select");
+  const current = categoryMonth || months[months.length - 1] || "";
+  select.innerHTML = [
+    `<option value="">Specific month</option>`,
+    ...months.map((month) => `<option value="${esc(month)}">${esc(month)}</option>`),
+  ].join("");
+  select.value = categoryPeriod === "month" ? current : "";
+  $("category-period-total").classList.toggle("is-active", categoryPeriod === "total");
+  $("category-period-average").classList.toggle("is-active", categoryPeriod === "average");
+  $("category-ensemble-toggle").checked = categoryUseEnsembles;
+}
+
 function renderCategoryChart(data) {
-  const rows = (data.spend?.summary || []).slice().sort((a, b) => asNumber(a.total_expense) - asNumber(b.total_expense));
+  renderCategoryControls(data);
+  const rows = buildCategoryChartRows(data);
   $("category-chart").style.height = `${Math.max(500, rows.length * 34)}px`;
   const trace = {
     type: "bar",
     orientation: "h",
-    x: rows.map((row) => asNumber(row.total_expense)),
-    y: rows.map((row) => row.category),
+    x: rows.map((row) => row.value),
+    y: rows.map((row) => row.label),
     marker: { color: rows.map((_, i) => colors[i % colors.length]) },
-    customdata: rows.map((row) => row.category),
-    text: rows.map((row) => fmtMoney(row.total_expense)),
+    customdata: rows.map((row) => row.categories),
+    text: rows.map((row) => fmtMoney(row.value)),
     textposition: "outside",
     cliponaxis: false,
     hovertemplate: "%{y}<br>%{x:$,.2f}<extra></extra>",
@@ -219,7 +302,7 @@ function renderCategoryChart(data) {
   $("category-chart").on("plotly_click", (event) => {
     const point = event.points?.[0];
     if (!point) return;
-    showCategoryDetails(point.customdata);
+    showCategoryGroupDetails(String(point.y), point.customdata);
   });
 }
 
@@ -462,6 +545,32 @@ function showCategoryDetails(category, month = null) {
   revealDetails();
 }
 
+function showCategoryGroupDetails(label, categories) {
+  const categoryList = Array.isArray(categories) ? categories : [String(categories)];
+  if (categoryList.length === 1) {
+    showCategoryDetails(categoryList[0], categoryPeriod === "month" ? categoryMonth : null);
+    return;
+  }
+  const rows = (dashboard.spend?.transactions || [])
+    .filter((row) => categoryList.includes(row.category))
+    .filter((row) => (categoryPeriod === "month" && categoryMonth ? row.statement_month === categoryMonth : true))
+    .sort((a, b) => asNumber(b.amount) - asNumber(a.amount));
+  const total = rows.reduce((sum, row) => sum + asNumber(row.amount), 0);
+  const periodLabel = categoryPeriod === "month" && categoryMonth ? categoryMonth : categoryPeriod === "average" ? "All included months" : "All included months";
+  $("detail-title").textContent = label;
+  $("detail-subtitle").textContent = `${periodLabel} · ${categoryList.length} categories · ${rows.length} transactions · ${fmtMoney(total)}`;
+  renderSortableDetailTable(rows, [
+    { key: "statement_month", label: "Month" },
+    { key: "category", label: "Category" },
+    { key: "transaction_date", label: "Date" },
+    { key: "spend_source", label: "Source" },
+    { key: "account_key", label: "Account" },
+    { key: "description", label: "Description" },
+    { key: "amount", label: "Amount", money: true, align: "right" },
+  ]);
+  revealDetails();
+}
+
 function showRefundDetails(category, month = null) {
   const rows = (dashboard.refunds?.transactions || [])
     .filter((row) => row.category === category)
@@ -562,6 +671,21 @@ document.addEventListener("DOMContentLoaded", () => {
   $("reload-btn").addEventListener("click", refreshAudit);
   $("file-input").addEventListener("change", uploadStatements);
   $("clear-detail-btn").addEventListener("click", clearDetails);
+  document.querySelectorAll("[data-category-period]").forEach((button) => {
+    button.addEventListener("click", () => {
+      categoryPeriod = button.dataset.categoryPeriod;
+      renderCategoryChart(dashboard);
+    });
+  });
+  $("category-month-select").addEventListener("change", (event) => {
+    categoryMonth = event.target.value;
+    if (categoryMonth) categoryPeriod = "month";
+    renderCategoryChart(dashboard);
+  });
+  $("category-ensemble-toggle").addEventListener("change", (event) => {
+    categoryUseEnsembles = event.target.checked;
+    renderCategoryChart(dashboard);
+  });
   document.querySelectorAll(".audit-pill").forEach((button) => {
     button.addEventListener("click", () => {
       renderAuditTable(dashboard, button.dataset.detail);
