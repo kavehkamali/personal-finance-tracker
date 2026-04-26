@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import threading
+import subprocess
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -21,7 +23,7 @@ from personal_finance.categories import (
     normalize_text,
     save_category_rules,
 )
-from personal_finance.config import APP_NAME, ocr_ensemble_backends_list, resolve_extraction_runtime
+from personal_finance.config import APP_NAME, INPUT_STATEMENTS_DIR, ROOT_DIR, ocr_ensemble_backends_list, resolve_extraction_runtime
 from personal_finance.jobs import create_job, get_job, make_progress_callback, update_job
 from personal_finance.pipeline import (
     clear_regenerable_cache,
@@ -48,6 +50,100 @@ def _sanitize_list_search(q: str | None, max_len: int = 200) -> str | None:
     return t[:max_len] if t else None
 
 
+AUDIT_DIR = INPUT_STATEMENTS_DIR / "statement_audit"
+ANALYTICS_DIR = AUDIT_DIR / "analytics"
+
+
+def _records_from_csv(path: Path) -> list[dict[str, object]]:
+    if not path.is_file():
+        return []
+    try:
+        df = pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        return []
+    df = df.where(pd.notna(df), None)
+    return df.to_dict(orient="records")
+
+
+def _first_record(path: Path) -> dict[str, object]:
+    rows = _records_from_csv(path)
+    return rows[0] if rows else {}
+
+
+def _sum_rows(rows: list[dict[str, object]], key: str) -> float:
+    total = 0.0
+    for row in rows:
+        try:
+            total += float(row.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+    return round(total, 2)
+
+
+def _audit_dashboard_payload() -> dict[str, object]:
+    account_summary = _records_from_csv(AUDIT_DIR / "account_summary.csv")
+    account_month_coverage = _records_from_csv(AUDIT_DIR / "account_month_coverage.csv")
+    reconciliation = _records_from_csv(AUDIT_DIR / "statement_reconciliation.csv")
+
+    all_spend_summary = _records_from_csv(ANALYTICS_DIR / "all_spend_category_summary.csv")
+    all_spend_by_month = _records_from_csv(ANALYTICS_DIR / "all_spend_category_by_month.csv")
+    all_spend_transactions = _records_from_csv(ANALYTICS_DIR / "all_spend_categorized_transactions.csv")
+    all_spend_totals = _first_record(ANALYTICS_DIR / "all_spend_summary.csv")
+
+    credit_summary = _first_record(ANALYTICS_DIR / "credit_card_expense_summary.csv")
+    credit_by_month = _records_from_csv(ANALYTICS_DIR / "credit_card_expenses_by_month.csv")
+    income_check = _records_from_csv(ANALYTICS_DIR / "income_cash_in_check_by_month.csv")
+    income_by_source = _records_from_csv(ANALYTICS_DIR / "income_cash_in_by_source.csv")
+
+    failed_reconciliation = [row for row in reconciliation if not bool(row.get("reconcile_ok"))]
+    middle_gaps = [row for row in account_summary if bool(row.get("has_middle_gap"))]
+    partial_or_missing = [row for row in account_month_coverage if row.get("status") != "full"]
+
+    total_spend = float(all_spend_totals.get("total_expense") or _sum_rows(all_spend_summary, "total_expense") or 0)
+    income_total = next((row for row in income_check if row.get("statement_month") == "TOTAL"), {})
+
+    return {
+        "paths": {
+            "audit_dir": str(AUDIT_DIR),
+            "analytics_dir": str(ANALYTICS_DIR),
+        },
+        "overview": {
+            "account_count": len(account_summary),
+            "middle_gap_count": len(middle_gaps),
+            "failed_reconciliation_count": len(failed_reconciliation),
+            "partial_or_missing_count": len(partial_or_missing),
+            "total_spend": round(total_spend, 2),
+            "credit_card_expense": float(all_spend_totals.get("credit_card_expense") or 0),
+            "debit_bank_expense": float(all_spend_totals.get("debit_bank_expense") or 0),
+            "months_included": str(all_spend_totals.get("months_included") or credit_summary.get("months_included") or ""),
+            "lg_plus_el_payroll": float(income_total.get("lg_plus_el_payroll") or 0),
+            "external_cash_in": float(income_total.get("external_cash_in") or 0),
+            "payroll_external_diff": float(income_total.get("payroll_vs_external_cash_in_diff") or 0),
+        },
+        "audit": {
+            "account_summary": account_summary,
+            "account_month_coverage": account_month_coverage,
+            "partial_or_missing": partial_or_missing,
+            "middle_gaps": middle_gaps,
+            "failed_reconciliation": failed_reconciliation,
+        },
+        "spend": {
+            "summary": all_spend_summary,
+            "by_month": all_spend_by_month,
+            "transactions": all_spend_transactions,
+            "totals": all_spend_totals,
+        },
+        "credit_cards": {
+            "summary": credit_summary,
+            "by_month": credit_by_month,
+        },
+        "income": {
+            "check_by_month": income_check,
+            "by_source": income_by_source,
+        },
+    }
+
+
 @app.on_event("startup")
 def startup_init() -> None:
     # Do not run MinerU/OCR here — that was firing "Predict" on every server start. Use
@@ -63,6 +159,37 @@ async def index(request: Request) -> HTMLResponse:
 @app.get("/api/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/audit-dashboard")
+async def audit_dashboard() -> dict[str, object]:
+    if not (AUDIT_DIR / "account_summary.csv").is_file() or not (ANALYTICS_DIR / "all_spend_category_summary.csv").is_file():
+        raise HTTPException(status_code=404, detail="Audit reports not found. Run Refresh audit first.")
+    return _audit_dashboard_payload()
+
+
+@app.post("/api/audit-refresh")
+async def audit_refresh() -> dict[str, object]:
+    commands = [
+        [sys.executable, str(ROOT_DIR / "scripts" / "statement_audit.py"), str(INPUT_STATEMENTS_DIR)],
+        [sys.executable, str(ROOT_DIR / "scripts" / "statement_analytics.py")],
+    ]
+    output: list[str] = []
+    for cmd in commands:
+        completed = subprocess.run(
+            cmd,
+            cwd=str(ROOT_DIR),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        output.append(completed.stdout)
+        if completed.returncode != 0:
+            raise HTTPException(status_code=500, detail="\n".join(output))
+    payload = _audit_dashboard_payload()
+    payload["refresh_output"] = "\n".join(output)
+    return payload
 
 
 @app.get("/api/summary")

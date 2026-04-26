@@ -4,519 +4,123 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{{ app_name }}</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2314804a'/%3E%3Cpath d='M8 20h16v3H8zm1-4h4v3H9zm6-7h4v10h-4zm6 4h4v6h-4z' fill='white'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}" />
     <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" defer></script>
     <script src="{{ url_for('static', path='/app.js') }}" defer></script>
   </head>
-  <body class="mint-app">
-    <header class="mint-topbar">
-      <div class="mint-topbar-inner">
-        <div class="mint-brand">
-          <span class="mint-brand-mark" aria-hidden="true"></span>
-          <div class="mint-brand-text">
-            <span class="mint-brand-name">{{ app_name }}</span>
-            <p class="mint-tagline">Household spending, reconciliation &amp; insights</p>
-          </div>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <strong>{{ app_name }}</strong>
+          <span>Audit and survival cash flow</span>
         </div>
-        <nav class="mint-top-actions" aria-label="Quick actions">
-          <a class="mint-link-skip" href="#dash-main">Skip to dashboard</a>
-          <button type="button" class="mint-btn mint-btn-ghost mint-btn--sm" id="reload-dashboard-btn" title="Re-run extraction on all statement files (shows progress for each OCR model)">
-            Refresh data
-          </button>
-        </nav>
+      </div>
+      <div class="top-actions">
+        <button class="btn btn-secondary" id="reload-btn" type="button">Refresh audit</button>
       </div>
     </header>
 
-    <div class="mint-layout">
-      <aside class="dash-sidebar" id="dash-sidebar" aria-label="Scope and layout">
-        <div class="dash-sidebar-header">
-          <div class="dash-sidebar-brand">
-            <h2 class="dash-sidebar-title">Workspace</h2>
-            <p class="dash-sidebar-sub">Scope, exclusions, and layout</p>
-          </div>
-          <button type="button" class="dash-sidebar-pin" id="dash-sidebar-toggle" aria-expanded="true" aria-controls="dash-sidebar-body" title="Collapse sidebar">
-            ‹
-          </button>
-        </div>
-
-        <div class="dash-sidebar-body" id="dash-sidebar-body">
-          <div class="dash-sidebar-group dash-sidebar-group--scope sidebar-scope-card">
-            <div class="sidebar-scope-top">
-              <h3 class="dash-sidebar-heading">Scope</h3>
-              <p class="dash-sidebar-hint">Everything on the dashboard follows these filters. Use ‹ › to move by month.</p>
-            </div>
-            <div class="period-toolbar" role="group" aria-label="Period">
-              <button type="button" class="period-nudge" id="period-prev-month" title="Previous month" aria-label="Previous month">
-                ‹
-              </button>
-              <div class="period-toolbar-fields">
-                <label class="sidebar-field sidebar-field--tight">
-                  <span class="sidebar-field-label">Year</span>
-                  <select id="year-filter" class="sidebar-select" aria-label="Filter by calendar year"></select>
-                </label>
-                <label class="sidebar-field sidebar-field--tight">
-                  <span class="sidebar-field-label">Month</span>
-                  <select id="calendar-month-filter" class="sidebar-select" aria-label="Filter by calendar month" disabled></select>
-                </label>
-              </div>
-              <button type="button" class="period-nudge" id="period-next-month" title="Next month" aria-label="Next month">
-                ›
-              </button>
-            </div>
-            <div class="sidebar-filters">
-              <p class="sidebar-filters-label">Slice by dimension</p>
-              <div class="sidebar-filter-grid">
-                <label class="sidebar-field">
-                  <span class="sidebar-field-label">Owner</span>
-                  <select id="owner-filter" class="sidebar-select"></select>
-                </label>
-                <label class="sidebar-field">
-                  <span class="sidebar-field-label">Account</span>
-                  <select id="account-filter" class="sidebar-select"></select>
-                </label>
-                <label class="sidebar-field">
-                  <span class="sidebar-field-label">Category</span>
-                  <select id="category-filter" class="sidebar-select"></select>
-                </label>
-                <label class="sidebar-field">
-                  <span class="sidebar-field-label">Need level</span>
-                  <select id="necessity-filter" class="sidebar-select"></select>
-                </label>
-                <label class="sidebar-field sidebar-field--full">
-                  <span class="sidebar-field-label">Beneficiary</span>
-                  <select id="beneficiary-filter" class="sidebar-select"></select>
-                </label>
-              </div>
-              <label class="sidebar-switch">
-                <input id="internal-toggle" type="checkbox" />
-                <span class="sidebar-switch-ui" aria-hidden="true"></span>
-                <span class="sidebar-switch-text">Include internal transfers in spend charts</span>
-              </label>
-            </div>
-          </div>
-
-          <div class="dash-sidebar-group sidebar-exclude-card">
-            <h3 class="dash-sidebar-heading">Hide from totals</h3>
-            <p class="dash-sidebar-hint">Check a row to exclude it from totals and charts (raw statements are unchanged).</p>
-            <details class="exclude-details" open>
-              <summary class="exclude-details-summary">Categories</summary>
-              <div id="exclude-categories-list" class="exclude-scroll" aria-label="Exclude categories"></div>
-            </details>
-            <details class="exclude-details">
-              <summary class="exclude-details-summary">Need levels</summary>
-              <div id="exclude-necessities-list" class="exclude-scroll" aria-label="Exclude need levels"></div>
-            </details>
-            <details class="exclude-details">
-              <summary class="exclude-details-summary">Beneficiaries</summary>
-              <div id="exclude-beneficiaries-list" class="exclude-scroll" aria-label="Exclude beneficiaries"></div>
-            </details>
-          </div>
-
-          <div class="dash-sidebar-group">
-            <h3 class="dash-sidebar-heading">Layout presets</h3>
-            <p class="dash-sidebar-hint">Start from a curated panel set, then fine-tune below.</p>
-            <div class="dash-preset-segment" role="group" aria-label="Layout presets">
-              <button type="button" class="dash-seg-btn" data-dash-preset="full">Full</button>
-              <button type="button" class="dash-seg-btn" data-dash-preset="minimal">Essentials</button>
-              <button type="button" class="dash-seg-btn" data-dash-preset="household">Household</button>
-              <button type="button" class="dash-seg-btn" data-dash-preset="reconcile">Reconcile</button>
-              <button type="button" class="dash-seg-btn" data-dash-preset="trends">Trends</button>
-            </div>
-          </div>
-
-          <div class="dash-sidebar-group">
-            <h3 class="dash-sidebar-heading">Visible panels</h3>
-            <p class="dash-sidebar-hint">Charts and tables in the main column</p>
-            <div class="dash-toggle-list" id="dash-toggle-list"></div>
-          </div>
-
-          <div class="dash-sidebar-group dash-sidebar-footer">
-            <button type="button" class="dash-footer-primary" id="dash-show-all">Show all panels</button>
-            <button type="button" class="dash-footer-ghost" id="dash-reset-layout">Reset layout memory</button>
-          </div>
-        </div>
-      </aside>
-
-      <main class="dash-main" id="dash-main">
-    <div class="page-shell">
-      <section class="mint-panel upload-panel upload-panel--compact" aria-label="Upload statements">
-        <div class="upload-row">
-          <form id="upload-form" class="dropzone dropzone--compact">
-            <input id="file-input" type="file" name="files" multiple accept=".pdf,.md" hidden />
-            <div class="dropzone-inner">
-              <span class="upload-ic-wrap" aria-hidden="true">
-                <svg class="upload-ic" viewBox="0 0 24 24" width="22" height="22" focusable="false">
-                  <path
-                    fill="currentColor"
-                    d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"
-                  />
-                </svg>
-              </span>
-              <span class="dropzone-text"><strong>Drop</strong> PDF / markdown</span>
-              <span class="dropzone-sep">·</span>
-              <button type="button" id="browse-button" class="mint-btn mint-btn-primary mint-btn--sm">Choose files</button>
-            </div>
-          </form>
-          <div class="upload-side-actions">
-            <button
-              type="button"
-              id="clear-cache-btn"
-              class="mint-btn mint-btn--ghost mint-btn--sm"
-              title="Remove cached uploads, MinerU OCR output, and processed transactions (not input_statements or rules)"
-            >
-              Clear cache
-            </button>
-          </div>
-        </div>
-
-        <div class="extraction-preset-block" id="extraction-preset-block" aria-label="Extraction speed">
-          <span class="extraction-preset-label">Extraction</span>
-          <div class="extraction-preset-options" role="radiogroup" aria-label="Model preset">
-            <label class="extraction-preset-opt">
-              <input type="radio" name="extraction-preset" value="fast" />
-              <span class="extraction-preset-title">Fast</span>
-              <span class="extraction-preset-sub">Embedded text first; MinerU pipeline only if that finds no rows (not your multi-VLM list)</span>
-            </label>
-            <label class="extraction-preset-opt">
-              <input type="radio" name="extraction-preset" value="slow" checked />
-              <span class="extraction-preset-title">Slow (full)</span>
-              <span class="extraction-preset-sub">Every model in PF_OCR_BACKENDS, always when OCR runs</span>
-            </label>
-          </div>
-          <p class="extraction-preset-hint" id="extraction-preset-hint"></p>
-        </div>
-
-        <div id="upload-progress-wrap" class="upload-progress-wrap" hidden>
-          <div class="upload-progress-line">
-            <span id="upload-progress-text" class="upload-progress-text">Processing…</span>
-            <span id="upload-progress-pct" class="upload-progress-pct"></span>
-          </div>
-          <p id="upload-progress-detail" class="upload-progress-detail" hidden></p>
-          <div class="progress-track progress-track--thin">
-            <div id="progress-fill" class="progress-fill"></div>
-          </div>
-        </div>
-
-        <div id="upload-feedback" class="upload-feedback" hidden></div>
-        <p id="activity-hint" class="activity-hint" hidden></p>
-
-        <div id="status-banner" class="status-banner status-banner--error" role="alert" hidden></div>
+    <main class="shell">
+      <section class="hero-grid" aria-label="Key figures">
+        <article class="metric-card metric-card-strong">
+          <span class="metric-label">Categorized spend</span>
+          <strong id="kpi-total-spend">...</strong>
+          <span id="kpi-months">Complete months only</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Credit card spend</span>
+          <strong id="kpi-credit">...</strong>
+          <span>Visa + MasterCard, complete months</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Debit / bank spend</span>
+          <strong id="kpi-debit">...</strong>
+          <span>Own-account transfers excluded</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">LG + EL payroll</span>
+          <strong id="kpi-payroll">...</strong>
+          <span id="kpi-income-diff">Compared with external cash-in</span>
+        </article>
       </section>
 
-      <section class="section-block" data-dash-section="statements">
-        <div class="dash-panel-wrap" data-dash-panel="panel-statement-coverage">
-          <div class="section-heading mint-section-head">
-            <h2 class="mint-section-title">Statement file coverage</h2>
-            <p class="mint-section-lead" id="statement-coverage-lead">Loading…</p>
+      <section class="audit-strip" aria-label="Audit status">
+        <button class="audit-pill" type="button" data-detail="middle-gaps">
+          <span>Middle gaps</span>
+          <strong id="audit-middle-gaps">0</strong>
+        </button>
+        <button class="audit-pill" type="button" data-detail="failed-reconciliation">
+          <span>Total mismatches</span>
+          <strong id="audit-failed">0</strong>
+        </button>
+        <button class="audit-pill" type="button" data-detail="partial-missing">
+          <span>Partial / missing</span>
+          <strong id="audit-partial">0</strong>
+        </button>
+        <button class="audit-pill" type="button" data-detail="accounts">
+          <span>Accounts</span>
+          <strong id="audit-accounts">0</strong>
+        </button>
+      </section>
+
+      <section class="grid grid-two">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Monthly Category Spend</h2>
+              <p>Click a segment or row to inspect the underlying transactions.</p>
+            </div>
           </div>
-          <article class="card card-full mint-card">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Expected accounts per month</h3>
-              <p class="mint-card-desc">
-                Scans <code>input_statements/</code> (and collapses duplicate downloads: same account + statement date with
-                <code>-1</code> / <code>-2-1</code> suffixes become one file; uploads are ignored if that logical PDF exists in
-                <code>input_statements</code>). Month = <strong>YYYY-MM</strong> from the date in the filename. Defaults: 4 chequing, 1 Visa, 1 MasterCard.
-              </p>
-            </div>
-            <p id="statement-coverage-caption" class="statement-coverage-caption"></p>
-            <div id="statement-coverage-unrecognized" class="statement-coverage-unrecognized" hidden></div>
-            <div id="statement-coverage-table" class="table-panel table-panel--scroll statement-coverage-wrap"></div>
-          </article>
-        </div>
+          <div id="category-chart" class="chart"></div>
+        </article>
 
-        <div class="dash-panel-wrap" data-dash-panel="panel-statement-totals">
-          <article class="card card-full mint-card">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Statement totals vs extracted rows</h3>
-              <p class="mint-card-desc" id="statement-totals-lead">Loading…</p>
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Income Check</h2>
+              <p>LG + EL payroll compared with external cash-in.</p>
             </div>
-            <p id="statement-totals-caption" class="statement-coverage-caption"></p>
-            <div id="statement-totals-table" class="table-panel table-panel--scroll statement-coverage-wrap"></div>
-          </article>
-        </div>
-      </section>
-
-      <section class="section-block" data-dash-section="overview">
-        <div class="dash-panel-wrap" data-dash-panel="panel-overview">
-          <div class="section-heading mint-section-head">
-            <h2 class="mint-section-title">At a glance</h2>
-            <p class="mint-section-lead">Primary totals for the current scope, with a quick monthly trend.</p>
           </div>
-          <section id="overview-cards" class="overview-grid"></section>
+          <div id="income-chart" class="chart chart-sm"></div>
+          <div id="income-table" class="compact-table"></div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Spend Breakdown</h2>
+            <p>Credit cards plus debit outflows. Obvious transfers between your own accounts are excluded.</p>
+          </div>
         </div>
+        <div id="category-table" class="table-wrap"></div>
       </section>
 
-      <section class="section-block" data-dash-section="trends">
-        <div class="section-heading mint-section-head">
-          <h2 class="mint-section-title">Insights &amp; charts</h2>
-          <p class="mint-section-lead">Drag ⋮⋮ on a card to reorder; × hides it (turn it back on under Visible panels). Scope below mirrors the sidebar.</p>
-          <div id="dash-scope-live" class="dash-scope-banner" role="status" aria-live="polite" hidden></div>
-        </div>
-
-        <section class="chart-grid" id="chart-grid">
-          <article class="card card-hero mint-card mint-card--hero" data-dash-panel="chart-monthly" data-chart-time="trend">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Monthly spend trend</h3>
-              <p class="mint-card-desc">Area + points — pick a <strong>year</strong> and <strong>month</strong> in the sidebar for daily detail.</p>
+      <section class="grid grid-two">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Audit Details</h2>
+              <p>Statement gaps and reconciliation issues.</p>
             </div>
-            <div id="monthly-chart" class="chart"></div>
-          </article>
+          </div>
+          <div id="audit-table" class="table-wrap table-wrap-sm"></div>
+        </article>
 
-          <article class="card card-compact mint-card" data-dash-panel="chart-category-donut" data-chart-time="category-donut">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Category mix</h3>
-              <p class="mint-card-desc">Share of spend (top categories).</p>
+        <article class="panel detail-panel">
+          <div class="panel-head">
+            <div>
+              <h2 id="detail-title">Details</h2>
+              <p id="detail-subtitle">Select a category, audit status, or chart segment.</p>
             </div>
-            <div id="chart-category-donut" class="chart chart--donut"></div>
-          </article>
-
-          <article class="card card-compact mint-card" data-dash-panel="chart-necessity" data-chart-time="necessity">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">By need level</h3>
-            </div>
-            <div id="necessity-chart" class="chart"></div>
-          </article>
-
-          <article class="card card-compact mint-card" data-dash-panel="chart-beneficiary" data-chart-time="beneficiary">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">By beneficiary</h3>
-            </div>
-            <div id="beneficiary-chart" class="chart"></div>
-          </article>
-
-          <article class="card card-wide mint-card" data-dash-panel="chart-treemap" data-chart-time="treemap">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Category → merchant</h3>
-              <p class="mint-card-desc">Treemap: rectangle size = spend. Click path bar to zoom out.</p>
-            </div>
-            <div id="chart-treemap" class="chart chart--tall"></div>
-          </article>
-
-          <article class="card card-full mint-card" data-dash-panel="chart-sankey" data-chart-time="sankey">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Money flow</h3>
-              <p class="mint-card-desc">Sankey: owner → beneficiary → category (expenses in scope).</p>
-            </div>
-            <div id="chart-sankey" class="chart chart--sankey"></div>
-          </article>
-
-          <article class="card card-wide mint-card" data-dash-panel="chart-sunburst" data-chart-time="sunburst">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Beneficiary → category → merchant</h3>
-              <p class="mint-card-desc">Sunburst: click segments to drill; double-click center to step up.</p>
-            </div>
-            <div id="chart-sunburst" class="chart chart--tall"></div>
-          </article>
-
-          <article class="card card-compact mint-card" data-dash-panel="chart-weekday" data-chart-time="weekday">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">By weekday</h3>
-              <p class="mint-card-desc">Where spend lands in the week.</p>
-            </div>
-            <div id="chart-weekday" class="chart"></div>
-          </article>
-
-          <article class="card card-wide mint-card" data-dash-panel="chart-necessity-monthly" data-chart-time="necessity-monthly">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Need level by month</h3>
-              <p class="mint-card-desc">One month selected → horizontal bars for that month.</p>
-            </div>
-            <div id="necessity-monthly-chart" class="chart"></div>
-          </article>
-
-          <article class="card card-wide mint-card" data-dash-panel="chart-beneficiary-monthly" data-chart-time="beneficiary-monthly">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Beneficiary over time</h3>
-              <p class="mint-card-desc">One month selected → bars per beneficiary for that month.</p>
-            </div>
-            <div id="beneficiary-monthly-chart" class="chart"></div>
-          </article>
-
-          <article class="card card-wide mint-card" data-dash-panel="chart-owner-beneficiary" data-chart-time="owner-beneficiary">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Owner vs beneficiary</h3>
-            </div>
-            <div id="owner-beneficiary-chart" class="chart"></div>
-          </article>
-
-          <article class="card card-compact mint-card" data-dash-panel="chart-category" data-chart-time="category-bar">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Categories (ranked)</h3>
-              <p class="mint-card-desc">Horizontal bars — compare to donut above.</p>
-            </div>
-            <div id="category-chart" class="chart"></div>
-          </article>
-
-          <article class="card card-compact mint-card" data-dash-panel="chart-flow" data-chart-time="flow">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Cash flow type</h3>
-            </div>
-            <div id="flow-chart" class="chart"></div>
-          </article>
-
-          <article class="card card-wide mint-card" data-dash-panel="chart-stacked" data-chart-time="stacked">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Category trends</h3>
-              <p class="mint-card-desc">Stacked over months, or ranked categories when a single month is in scope.</p>
-            </div>
-            <div id="stacked-chart" class="chart"></div>
-          </article>
-
-          <article class="card card-wide mint-card" data-dash-panel="chart-waterfall" data-chart-time="waterfall">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Top categories</h3>
-            </div>
-            <div id="waterfall-chart" class="chart"></div>
-          </article>
-
-          <article class="card card-compact mint-card" data-dash-panel="chart-owner" data-chart-time="owner">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">By owner</h3>
-            </div>
-            <div id="owner-chart" class="chart"></div>
-          </article>
-
-          <article class="card card-compact mint-card" data-dash-panel="chart-account" data-chart-time="account">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">By account</h3>
-            </div>
-            <div id="account-chart" class="chart"></div>
-          </article>
-
-          <article class="card card-wide mint-card" data-dash-panel="chart-merchant" data-chart-time="merchant">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Top merchants</h3>
-            </div>
-            <div id="merchant-chart" class="chart"></div>
-          </article>
-
-          <article class="card card-wide mint-card" data-dash-panel="chart-daily" data-chart-time="daily">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Daily spending</h3>
-            </div>
-            <div id="daily-chart" class="chart"></div>
-          </article>
-
-        </section>
+            <button class="btn btn-secondary btn-small" id="clear-detail-btn" type="button">Clear</button>
+          </div>
+          <div id="detail-table" class="table-wrap table-wrap-sm"></div>
+        </article>
       </section>
-
-      <section class="section-block section-block--categorize" data-dash-section="categorize">
-        <section class="table-grid">
-          <article class="card card-full mint-card mint-card--cat-review" data-dash-panel="panel-category-review">
-            <div class="card-head mint-card-head mint-card-head--row cat-review-card-head">
-              <div>
-                <h3 class="mint-card-title">Fix categories</h3>
-                <p class="mint-card-desc cat-review-card-desc">
-                  Rows here are <strong>Other</strong>, <strong>unknown merchants</strong>, or <strong>spend with no keyword rule</strong>.
-                  Set category and need level, optionally add a keyword rule for future imports.
-                </p>
-              </div>
-              <button type="button" class="cat-review-save-btn" id="category-review-save">Save changes</button>
-            </div>
-            <div id="category-review-toolbar" class="cat-review-toolbar" aria-hidden="true"></div>
-            <div id="category-review-list" class="category-review-list"></div>
-          </article>
-        </section>
-      </section>
-
-      <section class="section-block section-block--rules" data-dash-section="rules">
-        <section class="table-grid">
-          <article class="card card-full mint-card mint-card--rules" data-dash-panel="panel-rules">
-            <div class="card-head mint-card-head mint-card-head--row mint-card-head--rules">
-              <div class="rules-card-title">
-                <h3 class="mint-card-title mint-card-title--rules">Keyword rules</h3>
-                <p class="rules-card-sub">Search and filter, then bulk-set category / need / beneficiary on visible rows.</p>
-              </div>
-              <div class="rules-actions">
-                <button type="button" id="add-rule-button" class="mint-btn mint-btn-ghost mint-btn--sm">Add row</button>
-                <button type="button" id="save-rules-button" class="mint-btn mint-btn-primary mint-btn--sm">Save</button>
-              </div>
-            </div>
-            <div id="rules-table" class="table-panel table-panel--rules"></div>
-          </article>
-        </section>
-      </section>
-
-      <section class="section-block" data-dash-section="ledger">
-        <div class="section-heading mint-section-head">
-          <h2 class="mint-section-title">Ledger &amp; transfers</h2>
-          <p class="mint-section-lead">
-            Reconciliation, <strong>cash in</strong> (payroll-style income only — not shop refunds), <strong>cash out</strong> (ATM-style withdrawals and other debits that are not bills, purchases, or mortgages), and recent activity. Between-account moves are excluded.
-          </p>
-        </div>
-
-        <section class="table-grid">
-          <article class="card card-half mint-card" data-dash-panel="table-matched">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Matched transfers</h3>
-            </div>
-            <div id="matched-transfers" class="table-panel"></div>
-          </article>
-
-          <article class="card card-half mint-card" data-dash-panel="table-unmatched">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Unmatched</h3>
-            </div>
-            <div id="unmatched-internal" class="table-panel"></div>
-          </article>
-
-          <article class="card card-half mint-card" data-dash-panel="table-cash-in">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Cash in (true)</h3>
-              <p class="mint-card-desc" id="cash-in-ledger-caption">Loading…</p>
-            </div>
-            <div id="cash-in-transactions" class="table-panel table-panel--scroll"></div>
-          </article>
-
-          <article class="card card-half mint-card" data-dash-panel="table-cash-out">
-            <div class="card-head mint-card-head">
-              <h3 class="mint-card-title">Cash out (hard)</h3>
-              <p class="mint-card-desc" id="cash-out-ledger-caption">Loading…</p>
-            </div>
-            <div id="cash-out-transactions" class="table-panel table-panel--scroll"></div>
-          </article>
-
-          <article class="card card-full mint-card" data-dash-panel="table-recent">
-            <div class="card-head mint-card-head mint-card-head--row">
-              <div>
-                <h3 class="mint-card-title">Recent activity</h3>
-                <p class="mint-card-desc">Rows respect the same scope as charts. Export for Excel / Sheets.</p>
-              </div>
-              <button type="button" class="mint-btn mint-btn-ghost mint-btn--sm" id="export-recent-csv">Export CSV</button>
-            </div>
-            <div id="recent-transactions" class="table-panel table-panel--scroll"></div>
-          </article>
-        </section>
-      </section>
-
-      <section class="internal-review-section mint-panel" aria-label="Internal transfers and categorization check">
-        <div class="internal-review-head">
-          <h2 class="internal-review-title">Reconciliation &amp; quality check</h2>
-          <p class="internal-review-lead" id="internal-review-caption"></p>
-        </div>
-        <div class="internal-review-stats" id="internal-review-stats"></div>
-        <div class="internal-review-grid">
-          <article class="internal-review-card">
-            <h3 class="internal-review-card-title">Matched transfer pairs</h3>
-            <p class="internal-review-card-hint">Legs share amount (±1¢) and land within 7 days on different accounts.</p>
-            <div id="internal-review-matched" class="internal-review-table-wrap"></div>
-          </article>
-          <article class="internal-review-card">
-            <h3 class="internal-review-card-title">Unmatched transfer candidates</h3>
-            <p class="internal-review-card-hint">Text looks like a move between accounts but no opposite leg was found.</p>
-            <div id="internal-review-unmatched" class="internal-review-table-wrap"></div>
-          </article>
-          <article class="internal-review-card internal-review-card--wide">
-            <h3 class="internal-review-card-title">Largest &quot;Other&quot; spend</h3>
-            <p class="internal-review-card-hint">Add keyword rules for merchants you see here to reduce uncategorized noise.</p>
-            <div id="internal-review-other" class="internal-review-table-wrap"></div>
-          </article>
-        </div>
-      </section>
-    </div>
-      </main>
-    </div>
+    </main>
   </body>
 </html>
