@@ -26,6 +26,7 @@ let selectedCategory = null;
 let categoryPeriod = "total";
 let categoryMonth = "";
 let categoryUseEnsembles = false;
+let monthlyUseEnsembles = false;
 
 const categoryEnsembles = new Map([
   ["Mortgage Payments", "Housing & Debt"],
@@ -188,7 +189,11 @@ function renderSortableDetailTable(rows, columns) {
 function pivotCategories(rows) {
   const months = [...new Set(rows.map((r) => String(r.statement_month)))].sort();
   const categories = [...new Set(rows.map((r) => String(r.category)))];
-  const lookup = new Map(rows.map((r) => [`${r.category}|||${r.statement_month}`, asNumber(r.expense)]));
+  const lookup = new Map();
+  rows.forEach((r) => {
+    const key = `${r.category}|||${r.statement_month}`;
+    lookup.set(key, (lookup.get(key) || 0) + asNumber(r.expense));
+  });
   return { months, categories, lookup };
 }
 
@@ -393,7 +398,14 @@ function renderOutputCheckTable(data) {
 
 function renderMonthCategoryTable(data) {
   const rows = data.spend?.by_month || [];
-  const { months, categories, lookup } = pivotCategories(rows);
+  const preparedRows = monthlyUseEnsembles
+    ? rows.map((row) => ({
+        ...row,
+        category: categoryEnsembles.get(row.category) || row.category,
+        original_category: row.category,
+      }))
+    : rows;
+  const { months, categories, lookup } = pivotCategories(preparedRows);
   const totals = new Map();
   categories.forEach((cat) => {
     totals.set(cat, months.reduce((sum, month) => sum + (lookup.get(`${cat}|||${month}`) || 0), 0));
@@ -413,7 +425,18 @@ function renderMonthCategoryTable(data) {
   ];
   const container = $("month-category-table");
   renderSortableTable(container, tableRows, columns, {
-    onRowClick: (row) => showCategoryDetails(row.category),
+    onRowClick: (row) => {
+      if (!monthlyUseEnsembles) {
+        showCategoryDetails(row.category);
+        return;
+      }
+      const categoriesInGroup = [...new Set(
+        rows
+          .filter((item) => (categoryEnsembles.get(item.category) || item.category) === row.category)
+          .map((item) => item.category)
+      )];
+      showCategoryGroupDetails(row.category, categoriesInGroup);
+    },
   });
 }
 
@@ -685,6 +708,10 @@ document.addEventListener("DOMContentLoaded", () => {
   $("category-ensemble-toggle").addEventListener("change", (event) => {
     categoryUseEnsembles = event.target.checked;
     renderCategoryChart(dashboard);
+  });
+  $("monthly-ensemble-toggle").addEventListener("change", (event) => {
+    monthlyUseEnsembles = event.target.checked;
+    renderMonthCategoryTable(dashboard);
   });
   document.querySelectorAll(".audit-pill").forEach((button) => {
     button.addEventListener("click", () => {
