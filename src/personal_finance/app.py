@@ -81,38 +81,58 @@ def _sum_rows(rows: list[dict[str, object]], key: str) -> float:
     return round(total, 2)
 
 
-def _output_check_by_month(reconciliation: list[dict[str, object]]) -> list[dict[str, object]]:
+def _output_check_by_month(spend_transactions: list[dict[str, object]]) -> list[dict[str, object]]:
     monthly: dict[str, dict[str, object]] = {}
-    for row in reconciliation:
-        if row.get("account_kind") == "credit_line":
-            continue
+    for row in spend_transactions:
         month = str(row.get("statement_month") or "")
         if not month:
+            continue
+        category = str(row.get("category") or "")
+        description = str(row.get("description") or "").lower()
+        if "principal" in category.lower() or "principal" in description or "credit line" in category.lower():
             continue
         current = monthly.setdefault(
             month,
             {
                 "statement_month": month,
-                "statement_out": 0.0,
-                "parsed_out": 0.0,
-                "diff_out": 0.0,
-                "statement_count": 0,
-                "mismatch_count": 0,
+                "net_output": 0.0,
+                "credit_card_output": 0.0,
+                "bank_output": 0.0,
+                "refunds": 0.0,
+                "mortgage_home_line": 0.0,
+                "loan_interest": 0.0,
+                "transaction_count": 0,
             },
         )
-        current["statement_count"] = int(current["statement_count"]) + 1
-        if not bool(row.get("reconcile_ok")):
-            current["mismatch_count"] = int(current["mismatch_count"]) + 1
-        for key in ("statement_out", "parsed_out", "diff_out"):
-            try:
-                current[key] = float(current[key]) + float(row.get(key) or 0)
-            except (TypeError, ValueError):
-                continue
+        try:
+            amount = float(row.get("amount") or 0)
+        except (TypeError, ValueError):
+            continue
+        source = str(row.get("spend_source") or "")
+        current["net_output"] = float(current["net_output"]) + amount
+        current["transaction_count"] = int(current["transaction_count"]) + 1
+        if amount < 0:
+            current["refunds"] = float(current["refunds"]) + abs(amount)
+        if source.startswith("credit_card"):
+            current["credit_card_output"] = float(current["credit_card_output"]) + amount
+        elif source.startswith("debit_bank"):
+            current["bank_output"] = float(current["bank_output"]) + amount
+        if category == "Mortgage Payments":
+            current["mortgage_home_line"] = float(current["mortgage_home_line"]) + amount
+        elif category == "Loan Interest":
+            current["loan_interest"] = float(current["loan_interest"]) + amount
 
     rows = []
     for row in sorted(monthly.values(), key=lambda item: str(item["statement_month"])):
         row = row.copy()
-        for key in ("statement_out", "parsed_out", "diff_out"):
+        for key in (
+            "net_output",
+            "credit_card_output",
+            "bank_output",
+            "refunds",
+            "mortgage_home_line",
+            "loan_interest",
+        ):
             row[key] = round(float(row[key]), 2)
         rows.append(row)
     return rows
@@ -141,7 +161,7 @@ def _audit_dashboard_payload() -> dict[str, object]:
     credit_by_month = _records_from_csv(ANALYTICS_DIR / "credit_card_expenses_by_month.csv")
     income_check = _records_from_csv(ANALYTICS_DIR / "income_cash_in_check_by_month.csv")
     income_by_source = _records_from_csv(ANALYTICS_DIR / "income_cash_in_by_source.csv")
-    output_check = _output_check_by_month(reconciliation)
+    output_check = _output_check_by_month(all_spend_transactions)
 
     failed_reconciliation = [row for row in reconciliation if not bool(row.get("reconcile_ok"))]
     ignored_duplicate_files = [row for row in file_inventory if bool(row.get("ignored_duplicate_copy"))]

@@ -253,26 +253,16 @@ function renderOutputChart(data) {
   Plotly.newPlot(
     "output-chart",
     [
-      { type: "bar", name: "Statement out", x: months, y: rows.map((r) => asNumber(r.statement_out)), marker: { color: "#0f766e" } },
-      { type: "bar", name: "Parsed out", x: months, y: rows.map((r) => asNumber(r.parsed_out)), marker: { color: "#2563eb" } },
-      {
-        type: "scatter",
-        mode: "lines+markers",
-        name: "Diff",
-        x: months,
-        y: rows.map((r) => asNumber(r.diff_out)),
-        yaxis: "y2",
-        line: { color: "#e11d48", width: 2 },
-        marker: { size: 7 },
-      },
+      { type: "bar", name: "Net output", x: months, y: rows.map((r) => asNumber(r.net_output)), marker: { color: "#2563eb" } },
+      { type: "bar", name: "Mortgage + home line", x: months, y: rows.map((r) => asNumber(r.mortgage_home_line)), marker: { color: "#0f766e" } },
+      { type: "bar", name: "Loan interest", x: months, y: rows.map((r) => asNumber(r.loan_interest)), marker: { color: "#d97706" } },
     ],
     {
       barmode: "group",
-      margin: { l: 54, r: 44, t: 8, b: 36 },
+      margin: { l: 54, r: 12, t: 8, b: 36 },
       paper_bgcolor: "rgba(0,0,0,0)",
       plot_bgcolor: "rgba(0,0,0,0)",
       yaxis: { tickprefix: "$", gridcolor: "rgba(15,23,42,.09)" },
-      yaxis2: { overlaying: "y", side: "right", tickprefix: "$", zeroline: true, gridcolor: "rgba(0,0,0,0)" },
       xaxis: { type: "category" },
       legend: { orientation: "h", y: -0.22 },
       font: { family: "Inter, sans-serif", color: "#344054" },
@@ -307,10 +297,12 @@ function renderOutputCheckTable(data) {
     rows,
     [
       { key: "statement_month", label: "Month" },
-      { key: "statement_out", label: "Statement out", money: true, align: "right" },
-      { key: "parsed_out", label: "Parsed out", money: true, align: "right" },
-      { key: "diff_out", label: "Diff", money: true, align: "right" },
-      { key: "mismatch_count", label: "Mismatches", number: true, align: "right" },
+      { key: "net_output", label: "Net output", money: true, align: "right" },
+      { key: "mortgage_home_line", label: "Mortgage + home", money: true, align: "right" },
+      { key: "loan_interest", label: "Interest", money: true, align: "right" },
+      { key: "credit_card_output", label: "Credit cards", money: true, align: "right" },
+      { key: "bank_output", label: "Bank debits", money: true, align: "right" },
+      { key: "refunds", label: "Refunds", money: true, align: "right" },
     ],
     { onRowClick: (row) => showOutputDetails(row.statement_month) }
   );
@@ -432,20 +424,19 @@ function showAuditDetails(row) {
 }
 
 function showOutputDetails(month) {
-  const rows = (dashboard.audit?.failed_reconciliation || [])
-    .filter((row) => row.account_kind !== "credit_line")
+  const rows = (dashboard.spend?.transactions || [])
     .filter((row) => row.statement_month === month)
-    .sort((a, b) => Math.abs(asNumber(b.diff_out)) - Math.abs(asNumber(a.diff_out)));
-  const totalDiff = rows.reduce((sum, row) => sum + asNumber(row.diff_out), 0);
+    .sort((a, b) => asNumber(b.amount) - asNumber(a.amount));
+  const totalOutput = rows.reduce((sum, row) => sum + asNumber(row.amount), 0);
   $("detail-title").textContent = `Output check: ${month}`;
-  $("detail-subtitle").textContent = `${rows.length} mismatched statements · ${fmtMoney(totalDiff)} outflow difference`;
+  $("detail-subtitle").textContent = `${rows.length} included transactions · ${fmtMoney(totalOutput)} net output`;
   renderSortableDetailTable(rows, [
-    { key: "filename", label: "Statement" },
+    { key: "category", label: "Category" },
+    { key: "transaction_date", label: "Date" },
+    { key: "spend_source", label: "Source" },
     { key: "account_key", label: "Account" },
-    { key: "statement_out", label: "Statement out", money: true, align: "right" },
-    { key: "parsed_out", label: "Parsed out", money: true, align: "right" },
-    { key: "diff_out", label: "Diff", money: true, align: "right" },
-    { key: "notes", label: "Notes" },
+    { key: "description", label: "Description" },
+    { key: "amount", label: "Amount", money: true, align: "right" },
   ]);
   revealDetails();
 }
