@@ -105,6 +105,7 @@ def _audit_dashboard_payload() -> dict[str, object]:
 
     failed_reconciliation = [row for row in reconciliation if not bool(row.get("reconcile_ok"))]
     ignored_duplicate_files = [row for row in file_inventory if bool(row.get("ignored_duplicate_copy"))]
+    exact_duplicate_files = [row for row in file_inventory if int(row.get("same_content_file_count") or 0) > 1]
     middle_gaps = [row for row in account_summary if bool(row.get("has_middle_gap"))]
     partial_or_missing = [row for row in account_month_coverage if row.get("status") != "full"]
 
@@ -122,6 +123,7 @@ def _audit_dashboard_payload() -> dict[str, object]:
             "failed_reconciliation_count": len(failed_reconciliation),
             "partial_or_missing_count": len(partial_or_missing),
             "ignored_duplicate_file_count": len(ignored_duplicate_files),
+            "exact_duplicate_file_count": len(exact_duplicate_files),
             "total_spend": round(total_spend, 2),
             "external_spend_excluding_credit_line_principal": float(
                 all_spend_totals.get("external_expense_excluding_credit_line_principal") or 0
@@ -140,6 +142,7 @@ def _audit_dashboard_payload() -> dict[str, object]:
             "account_summary": account_summary,
             "file_inventory": file_inventory,
             "ignored_duplicate_files": ignored_duplicate_files,
+            "exact_duplicate_files": exact_duplicate_files,
             "account_month_coverage": account_month_coverage,
             "partial_or_missing": partial_or_missing,
             "middle_gaps": middle_gaps,

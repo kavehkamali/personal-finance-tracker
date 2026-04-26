@@ -7,18 +7,18 @@ const money = new Intl.NumberFormat("en-CA", {
 const num = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 2 });
 
 const colors = [
-  "#2563eb",
-  "#16a34a",
-  "#f59e0b",
-  "#dc2626",
-  "#7c3aed",
-  "#0891b2",
-  "#db2777",
-  "#4b5563",
-  "#84cc16",
-  "#ea580c",
+  "#1f6feb",
+  "#198754",
+  "#c27c0e",
+  "#c2415b",
+  "#6f42c1",
+  "#0f7f8c",
+  "#8f5e15",
+  "#536471",
+  "#4d7c0f",
+  "#b45309",
   "#0f766e",
-  "#9333ea",
+  "#7c3aed",
 ];
 
 let dashboard = null;
@@ -102,6 +102,7 @@ function setKpis(data) {
   $("kpi-total-spend").textContent = fmtMoney(ov.total_spend);
   $("kpi-credit").textContent = fmtMoney(ov.credit_card_expense);
   $("kpi-external-spend").textContent = fmtMoney(ov.external_spend_excluding_credit_line_principal);
+  $("kpi-loc-principal").textContent = fmtMoney(ov.credit_line_principal_payments);
   $("kpi-lg").textContent = fmtMoney(ov.lg_payroll);
   $("kpi-el").textContent = fmtMoney(ov.el_payroll);
   $("kpi-months").textContent = `Months: ${ov.months_included || "not available"}`;
@@ -110,7 +111,7 @@ function setKpis(data) {
   $("audit-failed").textContent = ov.failed_reconciliation_count ?? 0;
   $("audit-partial").textContent = ov.partial_or_missing_count ?? 0;
   $("audit-accounts").textContent = ov.account_count ?? 0;
-  $("audit-duplicates").textContent = ov.ignored_duplicate_file_count ?? 0;
+  $("audit-duplicates").textContent = `${ov.exact_duplicate_file_count ?? 0} / ${ov.ignored_duplicate_file_count ?? 0}`;
 }
 
 function renderCategoryChart(data) {
@@ -151,7 +152,8 @@ function renderIncomeChart(data) {
     "income-chart",
     [
       { type: "bar", name: "External cash-in", x: months, y: rows.map((r) => asNumber(r.external_cash_in)), marker: { color: "#0f766e" } },
-      { type: "bar", name: "LG + EL payroll", x: months, y: rows.map((r) => asNumber(r.lg_plus_el_payroll)), marker: { color: "#2563eb" } },
+      { type: "bar", name: "LG payroll", x: months, y: rows.map((r) => asNumber(r.lg_payroll)), marker: { color: "#1f6feb" } },
+      { type: "bar", name: "EL payroll", x: months, y: rows.map((r) => asNumber(r.el_unitytech_payroll)), marker: { color: "#c27c0e" } },
     ],
     {
       barmode: "group",
@@ -172,8 +174,42 @@ function renderIncomeTable(data) {
   $("income-table").innerHTML = rowsToTable(rows, [
     { key: "statement_month", label: "Month" },
     { key: "external_cash_in", label: "External in", money: true, align: "right" },
+    { key: "lg_payroll", label: "LG", money: true, align: "right" },
+    { key: "el_unitytech_payroll", label: "EL", money: true, align: "right" },
     { key: "lg_plus_el_payroll", label: "LG + EL", money: true, align: "right" },
-    { key: "payroll_vs_external_cash_in_diff", label: "Diff", money: true, align: "right" },
+    { key: "excluded_internal_cash_in", label: "Excluded internal", money: true, align: "right" },
+    { key: "payroll_vs_external_cash_in_diff", label: "Unmatched external", money: true, align: "right" },
+  ]);
+}
+
+function renderSpendSplitTable(data) {
+  const ov = data.overview || {};
+  const rows = [
+    {
+      line: "External spend",
+      amount: ov.external_spend_excluding_credit_line_principal,
+      notes: "Own-account transfers and LOC principal excluded",
+    },
+    {
+      line: "Credit-line principal",
+      amount: ov.credit_line_principal_payments,
+      notes: "Shown separately from survival spend",
+    },
+    {
+      line: "Credit cards",
+      amount: ov.credit_card_expense,
+      notes: "Visa and MasterCard purchase/debit activity",
+    },
+    {
+      line: "Debit bank spend",
+      amount: ov.debit_bank_expense,
+      notes: "Chequing debit outflows after own transfers removed",
+    },
+  ];
+  $("spend-split-table").innerHTML = rowsToTable(rows, [
+    { key: "line", label: "Line" },
+    { key: "amount", label: "Amount", money: true, align: "right" },
+    { key: "notes", label: "Treatment" },
   ]);
 }
 
@@ -252,16 +288,29 @@ function renderAuditTable(data, mode = "failed-reconciliation") {
       { key: "months_missing", label: "Missing", number: true, align: "right" },
     ];
   } else if (mode === "duplicates") {
-    rows = audit.ignored_duplicate_files || [];
+    rows = [...(audit.exact_duplicate_files || []), ...(audit.ignored_duplicate_files || [])];
     columns = [
-      { key: "filename", label: "Ignored file" },
+      { key: "filename", label: "File" },
       { key: "logical_statement_key", label: "Logical statement" },
+      { key: "ignored_duplicate_copy", label: "Ignored" },
       { key: "same_logical_statement_count", label: "Same logical", number: true, align: "right" },
       { key: "same_content_file_count", label: "Same content", number: true, align: "right" },
       { key: "sha256", label: "SHA-256" },
     ];
   }
-  $("audit-table").innerHTML = rowsToTable(rows, columns);
+  const container = $("audit-table");
+  container.innerHTML = rowsToTable(rows, columns, { rowClick: true });
+  attachRowClicks(container, rows, (row) => showAuditDetails(row));
+}
+
+function showAuditDetails(row) {
+  const entries = Object.entries(row || {}).map(([field, value]) => ({ field, value }));
+  $("detail-title").textContent = "Audit row";
+  $("detail-subtitle").textContent = row?.filename || row?.account_key || "Selected audit detail";
+  $("detail-table").innerHTML = rowsToTable(entries, [
+    { key: "field", label: "Field" },
+    { key: "value", label: "Value" },
+  ]);
 }
 
 function showCategoryDetails(category, month = null) {
@@ -296,6 +345,7 @@ function render(data) {
   renderCategoryChart(data);
   renderIncomeChart(data);
   renderIncomeTable(data);
+  renderSpendSplitTable(data);
   renderMonthCategoryTable(data);
   renderCategoryTable(data);
   renderAuditTable(data);
@@ -316,14 +366,17 @@ async function refreshAudit() {
   const btn = $("reload-btn");
   btn.disabled = true;
   btn.textContent = "Refreshing...";
+  $("process-status").textContent = "Processing uploaded statements...";
   try {
     render(await fetchJson("/api/audit-refresh", { method: "POST" }));
+    $("process-status").textContent = "Processed files and refreshed audit.";
   } catch (error) {
     $("detail-title").textContent = "Refresh failed";
     $("detail-subtitle").textContent = error.message;
+    $("process-status").textContent = "Processing failed.";
   } finally {
     btn.disabled = false;
-    btn.textContent = "Refresh audit";
+    btn.textContent = "Process files";
   }
 }
 
@@ -333,18 +386,22 @@ async function uploadStatements(event) {
   const btn = $("reload-btn");
   btn.disabled = true;
   btn.textContent = "Uploading...";
+  $("process-status").textContent = `Uploading ${files.length} file${files.length === 1 ? "" : "s"}...`;
   const body = new FormData();
   [...files].forEach((file) => body.append("files", file));
   try {
     await fetchJson("/api/audit-upload", { method: "POST", body });
     btn.textContent = "Refreshing...";
+    $("process-status").textContent = "Upload complete. Processing files...";
     render(await fetchJson("/api/audit-refresh", { method: "POST" }));
+    $("process-status").textContent = "Uploaded and processed files.";
   } catch (error) {
     $("detail-title").textContent = "Upload failed";
     $("detail-subtitle").textContent = error.message;
+    $("process-status").textContent = "Upload failed.";
   } finally {
     btn.disabled = false;
-    btn.textContent = "Refresh audit";
+    btn.textContent = "Process files";
     event.target.value = "";
   }
 }

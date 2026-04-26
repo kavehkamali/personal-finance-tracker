@@ -18,13 +18,6 @@
           <span>Audit and survival cash flow</span>
         </div>
       </div>
-      <div class="top-actions">
-        <label class="btn btn-secondary file-btn">
-          Upload statements
-          <input id="file-input" type="file" multiple accept=".pdf,.md" hidden />
-        </label>
-        <button class="btn btn-secondary" id="reload-btn" type="button">Refresh audit</button>
-      </div>
     </header>
 
     <main class="shell">
@@ -45,6 +38,11 @@
           <span>Excludes own transfers and LOC principal</span>
         </article>
         <article class="metric-card">
+          <span class="metric-label">LOC principal</span>
+          <strong id="kpi-loc-principal">...</strong>
+          <span>Separated from survival spend</span>
+        </article>
+        <article class="metric-card">
           <span class="metric-label">LG payroll</span>
           <strong id="kpi-lg">...</strong>
           <span>Company payroll only</span>
@@ -54,6 +52,20 @@
           <strong id="kpi-el">...</strong>
           <span id="kpi-income-diff">Separated from LG</span>
         </article>
+      </section>
+
+      <section class="process-panel" aria-label="Statement processing">
+        <div>
+          <h2>Statement Processing</h2>
+          <p id="process-status">Ready</p>
+        </div>
+        <div class="top-actions">
+          <label class="btn file-btn">
+            Upload statements
+            <input id="file-input" type="file" multiple accept=".pdf,.md" hidden />
+          </label>
+          <button class="btn btn-secondary" id="reload-btn" type="button">Process files</button>
+        </div>
       </section>
 
       <section class="audit-strip" aria-label="Audit status">
@@ -74,32 +86,9 @@
           <strong id="audit-accounts">0</strong>
         </button>
         <button class="audit-pill" type="button" data-detail="duplicates">
-          <span>Ignored duplicates</span>
-          <strong id="audit-duplicates">0</strong>
+          <span>Content / ignored dup</span>
+          <strong id="audit-duplicates">0 / 0</strong>
         </button>
-      </section>
-
-      <section class="grid grid-two">
-        <article class="panel">
-          <div class="panel-head">
-            <div>
-              <h2>Category Ranking</h2>
-              <p>Click a bar or row to inspect the underlying transactions.</p>
-            </div>
-          </div>
-          <div id="category-chart" class="chart"></div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <div>
-              <h2>Income Check</h2>
-              <p>LG + EL payroll compared with external cash-in.</p>
-            </div>
-          </div>
-          <div id="income-chart" class="chart chart-sm"></div>
-          <div id="income-table" class="compact-table"></div>
-        </article>
       </section>
 
       <section class="panel">
@@ -110,6 +99,28 @@
           </div>
         </div>
         <div id="month-category-table" class="table-wrap"></div>
+      </section>
+
+      <section class="grid grid-two">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Income Check</h2>
+              <p>LG, EL, external cash-in, and unmatched cash-in by month.</p>
+            </div>
+          </div>
+          <div id="income-table" class="compact-table"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Spend Split</h2>
+              <p>External spend, credit cards, debit bank spend, and LOC principal.</p>
+            </div>
+          </div>
+          <div id="spend-split-table" class="compact-table"></div>
+        </article>
       </section>
 
       <section class="panel">
@@ -142,6 +153,28 @@
             <button class="btn btn-secondary btn-small" id="clear-detail-btn" type="button">Clear</button>
           </div>
           <div id="detail-table" class="table-wrap table-wrap-sm"></div>
+        </article>
+      </section>
+
+      <section class="grid grid-two charts-secondary">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Category Ranking</h2>
+              <p>Secondary visual; tables above are the source of truth.</p>
+            </div>
+          </div>
+          <div id="category-chart" class="chart chart-compact"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Income Visual</h2>
+              <p>Secondary visual for monthly cash-in comparison.</p>
+            </div>
+          </div>
+          <div id="income-chart" class="chart chart-compact"></div>
         </article>
       </section>
     </main>
