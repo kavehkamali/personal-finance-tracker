@@ -8,7 +8,10 @@ from personal_finance.categories import (
     BENEFICIARY_OPTIONS,
     CATEGORY_OPTIONS,
     NECESSITY_OPTIONS,
+    normalize_text,
 )
+from personal_finance.statement_coverage import build_statement_coverage_report
+from personal_finance.statement_totals_reconcile import build_statement_totals_check
 from personal_finance.transaction_overrides import transaction_key_series
 
 
@@ -28,6 +31,87 @@ def _frame_to_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
         elif pd.api.types.is_float_dtype(out[column]):
             out[column] = out[column].round(2)
     return out.to_dict(orient="records")
+
+
+CASH_LEDGER_LIST_MAX = 2500
+
+
+def _ledger_text_series(df: pd.DataFrame) -> pd.Series:
+    d = df["description"].fillna("").map(lambda x: normalize_text(str(x)).lower())
+    if "merchant" in df.columns:
+        m = df["merchant"].fillna("").map(lambda x: normalize_text(str(x)).lower())
+        return d + " " + m
+    return d
+
+
+def _mask_true_cash_in(df: pd.DataFrame) -> pd.Series:
+    """
+    True cash in: payroll-style deposits only — not retail refunds, card credits, or reversals.
+    """
+    cf = pd.to_numeric(df["cash_flow_amount"], errors="coerce").fillna(0.0)
+    ft = df["flow_type"].astype(str)
+    text = _ledger_text_series(df)
+    base = (cf > 0) & (~df["is_internal"].fillna(False)) & ft.eq("Income")
+    retail_credit = (
+        text.str.contains("refund", na=False)
+        | text.str.contains("reversal", na=False)
+        | text.str.contains("interac purchase refund", na=False)
+        | text.str.contains("contactless interac refund", na=False)
+        | text.str.contains("interac refund", na=False)
+        | text.str.contains("purchase refund", na=False)
+        | text.str.contains("credit voucher", na=False)
+        | text.str.contains("cash back", na=False)
+        | text.str.contains("cashback", na=False)
+        | text.str.contains("returned", na=False)
+    )
+    return base & ~retail_credit
+
+
+def _mask_hard_cash_out(df: pd.DataFrame) -> pd.Series:
+    """
+    Hard cash out: ATM / branch cash style withdrawals, or uncategorized debits that are not purchases/bills.
+    Excludes mortgages, typical expenses, Interac purchases, and bill payments.
+    """
+    cf = pd.to_numeric(df["cash_flow_amount"], errors="coerce").fillna(0.0)
+    cat = df["category"].astype(str)
+    text = _ledger_text_series(df)
+    neg = (cf < 0) & (~df["is_internal"].fillna(False))
+
+    mortgage = text.str.contains("mortgage", na=False) | text.str.contains("mcap", na=False) | text.str.contains(r"\bmortg\b", na=False, regex=True)
+
+    wd = pd.Series(False, index=df.index)
+    for sub in (
+        "atm withdrawal",
+        "withdrawal - atm",
+        "withdrawal atm",
+        "atm - ",
+        "atm -",
+        "cash withdrawal",
+        "cash wdl",
+        "wdl atm",
+        "cash advance",
+        "cash out",
+        "branch withdrawal",
+        "debit cash",
+    ):
+        wd = wd | text.str.contains(sub, case=False, na=False)
+
+    purchase_or_bill = (
+        text.str.contains("interac purchase", na=False)
+        | text.str.contains("contactless interac", na=False)
+        | text.str.contains("pre-authorized", na=False)
+        | text.str.contains("preauthorized", na=False)
+        | text.str.contains("bill payment", na=False)
+        | text.str.contains("online banking payment", na=False)
+        | text.str.contains("credit card payment", na=False)
+        | text.str.contains("visa payment", na=False)
+        | text.str.contains("mc payment", na=False)
+        | text.str.contains("payment - thank", na=False)
+    )
+
+    other_debit = cat.eq("Other") & ~purchase_or_bill & ~mortgage
+
+    return neg & (wd | other_debit)
 
 
 def _clean_list(values: list[str] | None) -> list[str]:
@@ -178,6 +262,29 @@ def _taxonomy() -> dict[str, list[str]]:
     }
 
 
+def _monthly_groups(
+    df: pd.DataFrame,
+    label_cols: list[str],
+    value_col: str,
+    *,
+    top_per_month: int | None = None,
+) -> pd.DataFrame:
+    """Long-format rows: month + label_cols + value_col (summed per group)."""
+    if df.empty or "month" not in df.columns:
+        return pd.DataFrame(columns=["month", *label_cols, value_col])
+    parts: list[pd.DataFrame] = []
+    for month_val, grp in df.groupby("month", sort=True):
+        g = grp.groupby(list(label_cols), as_index=False)[value_col].sum()
+        g = g.sort_values(value_col, ascending=False)
+        if top_per_month is not None:
+            g = g.head(int(top_per_month))
+        g.insert(0, "month", month_val)
+        parts.append(g)
+    if not parts:
+        return pd.DataFrame(columns=["month", *label_cols, value_col])
+    return pd.concat(parts, ignore_index=True)
+
+
 def _build_waterfall(expense_rows: pd.DataFrame) -> list[dict[str, Any]]:
     if expense_rows.empty:
         return []
@@ -225,6 +332,13 @@ def build_dashboard_payload(
                 "top_category": None,
                 "top_category_amount": 0.0,
                 "avg_expense_transaction": 0.0,
+                "expense_month_count": 1,
+                "cash_in_ledger_total": 0.0,
+                "cash_out_ledger_total": 0.0,
+                "cash_in_ledger_count": 0,
+                "cash_out_ledger_count": 0,
+                "cash_in_ledger_shown": 0,
+                "cash_out_ledger_shown": 0,
                 "extraction_quality": {
                     "mode": None,
                     "backends": [],
@@ -244,6 +358,15 @@ def build_dashboard_payload(
             "monthly_category_breakdown": [],
             "monthly_necessity_breakdown": [],
             "monthly_beneficiary_breakdown": [],
+            "monthly_merchant_breakdown": [],
+            "monthly_owner_breakdown": [],
+            "monthly_account_breakdown": [],
+            "monthly_flow_breakdown": [],
+            "monthly_weekday_breakdown": [],
+            "monthly_treemap_breakdown": [],
+            "monthly_sunburst_breakdown": [],
+            "monthly_owner_beneficiary_breakdown": [],
+            "monthly_sankey": [],
             "merchant_breakdown": [],
             "owner_breakdown": [],
             "account_breakdown": [],
@@ -256,6 +379,8 @@ def build_dashboard_payload(
             "matched_transfers": [],
             "unmatched_internal": [],
             "recent_transactions": [],
+            "cash_in_transactions": [],
+            "cash_out_transactions": [],
             "statement_breakdown": [],
             "sankey": {"nodes": [], "links": []},
             "filter_dimensions": {
@@ -272,6 +397,8 @@ def build_dashboard_payload(
             },
             "taxonomy": _taxonomy(),
             "category_review": [],
+            "statement_coverage": build_statement_coverage_report(),
+            "statement_totals_check": build_statement_totals_check(),
         }
 
     base = df.copy()
@@ -309,6 +436,12 @@ def build_dashboard_payload(
     )
     expense_rows = filtered[filtered["expense_amount"] > 0].copy()
 
+    expense_month_count = (
+        max(1, int(expense_rows["month"].nunique()))
+        if not expense_rows.empty and "month" in expense_rows.columns
+        else 1
+    )
+
     overview = {
         "transaction_count": int(len(filtered)),
         "statement_count": int(scope["statement_id"].nunique()),
@@ -321,6 +454,7 @@ def build_dashboard_payload(
         "date_end": scope["transaction_date"].max().strftime("%Y-%m-%d") if scope["transaction_date"].notna().any() else None,
         "matched_internal_pairs": int(scope.loc[scope["internal_match_status"] == "Matched", "match_id"].nunique()),
         "unmatched_internal_rows": int(scope["internal_match_status"].eq("Unmatched").sum()),
+        "expense_month_count": expense_month_count,
     }
 
     ee = meta.get("extraction_ensemble") if isinstance(meta, dict) else None
@@ -441,6 +575,47 @@ def build_dashboard_payload(
         .rename(columns={"expense_amount": "value"})
     )
 
+    monthly_merchant_breakdown = _monthly_groups(expense_rows, ["merchant"], "expense_amount", top_per_month=20).rename(
+        columns={"expense_amount": "value"}
+    )
+    monthly_owner_breakdown = _monthly_groups(expense_rows, ["owner"], "expense_amount", top_per_month=None).rename(
+        columns={"expense_amount": "value"}
+    )
+    monthly_account_breakdown = _monthly_groups(expense_rows, ["account_label"], "expense_amount", top_per_month=None).rename(
+        columns={"expense_amount": "value"}
+    )
+    if not filtered.empty and "month" in filtered.columns:
+        monthly_flow_breakdown = (
+            filtered.groupby(["month", "flow_type"])["cash_flow_amount"].sum().reset_index().rename(columns={"cash_flow_amount": "value"})
+        )
+    else:
+        monthly_flow_breakdown = pd.DataFrame(columns=["month", "flow_type", "value"])
+    monthly_weekday_breakdown = (
+        expense_rows.groupby(["month", "weekday"])["expense_amount"].sum().reset_index().rename(columns={"expense_amount": "value"})
+        if not expense_rows.empty
+        else pd.DataFrame(columns=["month", "weekday", "value"])
+    )
+    monthly_treemap_breakdown = _monthly_groups(
+        expense_rows, ["necessity", "category", "merchant"], "expense_amount", top_per_month=80
+    ).rename(columns={"expense_amount": "value"})
+    monthly_sunburst_breakdown = _monthly_groups(
+        expense_rows, ["beneficiary", "category", "merchant"], "expense_amount", top_per_month=100
+    ).rename(columns={"expense_amount": "value"})
+    monthly_owner_beneficiary_breakdown = (
+        expense_rows.groupby(["month", "owner", "beneficiary"])["expense_amount"]
+        .sum()
+        .reset_index()
+        .rename(columns={"expense_amount": "value"})
+        if not expense_rows.empty
+        else pd.DataFrame(columns=["month", "owner", "beneficiary", "value"])
+    )
+    monthly_sankey: list[dict[str, Any]] = []
+    if not expense_rows.empty and "month" in expense_rows.columns:
+        for m in sorted(expense_rows["month"].dropna().unique()):
+            sub = expense_rows[expense_rows["month"] == m]
+            sk = _build_owner_beneficiary_sankey(sub)
+            monthly_sankey.append({"month": str(m), "nodes": sk["nodes"], "links": sk["links"]})
+
     transfer_pairs = scope[scope["internal_match_status"] == "Matched"].copy()
     matched_transfers = []
     for match_id, rows in transfer_pairs.groupby("match_id"):
@@ -495,6 +670,54 @@ def build_dashboard_payload(
     recent_present = [c for c in recent_cols if c in filtered.columns]
     recent_transactions = filtered[recent_present].sort_values("transaction_date", ascending=False).head(80)
 
+    cash_ledger_cols = [
+        "transaction_date",
+        "owner",
+        "account_label",
+        "merchant",
+        "description",
+        "category",
+        "flow_type",
+        "amount",
+        "cash_flow_amount",
+    ]
+    cash_present = [c for c in cash_ledger_cols if c in filtered.columns]
+    if cash_present and "cash_flow_amount" in filtered.columns:
+        if "is_internal" in filtered.columns:
+            ext_mask = ~filtered["is_internal"].fillna(False)
+        else:
+            ext_mask = ~filtered["flow_type"].astype(str).eq("Internal Transfer")
+        ledger_cols = list(dict.fromkeys(cash_present + ["is_internal"]))
+        ledger_cols = [c for c in ledger_cols if c in filtered.columns]
+        ext_df = filtered.loc[ext_mask, ledger_cols].copy()
+        if not ext_df.empty and "transaction_date" in ext_df.columns:
+            ext_df = ext_df.sort_values("transaction_date", ascending=False)
+        if (
+            not ext_df.empty
+            and "is_internal" in ext_df.columns
+            and "flow_type" in ext_df.columns
+            and "category" in ext_df.columns
+        ):
+            cash_in_df = ext_df[_mask_true_cash_in(ext_df)].drop(columns=["is_internal"], errors="ignore")
+            cash_out_df = ext_df[_mask_hard_cash_out(ext_df)].drop(columns=["is_internal"], errors="ignore")
+        else:
+            cash_in_df = ext_df[ext_df["cash_flow_amount"] > 0].drop(columns=["is_internal"], errors="ignore")
+            cash_out_df = ext_df[ext_df["cash_flow_amount"] < 0].drop(columns=["is_internal"], errors="ignore")
+    else:
+        cash_in_df = pd.DataFrame(columns=cash_present or ["transaction_date"])
+        cash_out_df = pd.DataFrame(columns=cash_present or ["transaction_date"])
+
+    overview["cash_in_ledger_total"] = round(float(cash_in_df["cash_flow_amount"].sum()), 2) if not cash_in_df.empty else 0.0
+    overview["cash_out_ledger_total"] = round(float(cash_out_df["cash_flow_amount"].sum()), 2) if not cash_out_df.empty else 0.0
+    overview["cash_in_ledger_count"] = int(len(cash_in_df))
+    overview["cash_out_ledger_count"] = int(len(cash_out_df))
+    ci_cap = cash_in_df.head(CASH_LEDGER_LIST_MAX)
+    co_cap = cash_out_df.head(CASH_LEDGER_LIST_MAX)
+    overview["cash_in_ledger_shown"] = int(len(ci_cap))
+    overview["cash_out_ledger_shown"] = int(len(co_cap))
+    cash_in_transactions = _frame_to_records(ci_cap)
+    cash_out_transactions = _frame_to_records(co_cap)
+
     category_review = _build_category_review(filtered, limit=100)
 
     amt_timing_pairs = 0
@@ -543,6 +766,15 @@ def build_dashboard_payload(
         "monthly_category_breakdown": _frame_to_records(monthly_category_breakdown),
         "monthly_necessity_breakdown": _frame_to_records(monthly_necessity_breakdown),
         "monthly_beneficiary_breakdown": _frame_to_records(monthly_beneficiary_breakdown),
+        "monthly_merchant_breakdown": _frame_to_records(monthly_merchant_breakdown),
+        "monthly_owner_breakdown": _frame_to_records(monthly_owner_breakdown),
+        "monthly_account_breakdown": _frame_to_records(monthly_account_breakdown),
+        "monthly_flow_breakdown": _frame_to_records(monthly_flow_breakdown),
+        "monthly_weekday_breakdown": _frame_to_records(monthly_weekday_breakdown),
+        "monthly_treemap_breakdown": _frame_to_records(monthly_treemap_breakdown),
+        "monthly_sunburst_breakdown": _frame_to_records(monthly_sunburst_breakdown),
+        "monthly_owner_beneficiary_breakdown": _frame_to_records(monthly_owner_beneficiary_breakdown),
+        "monthly_sankey": monthly_sankey,
         "merchant_breakdown": _frame_to_records(merchant_breakdown.rename(columns={"merchant": "label"})),
         "owner_breakdown": _frame_to_records(owner_breakdown.rename(columns={"owner": "label"})),
         "account_breakdown": _frame_to_records(account_breakdown.rename(columns={"account_label": "label"})),
@@ -555,9 +787,13 @@ def build_dashboard_payload(
         "matched_transfers": matched_transfers,
         "unmatched_internal": _frame_to_records(unmatched_internal),
         "recent_transactions": _frame_to_records(recent_transactions),
+        "cash_in_transactions": cash_in_transactions,
+        "cash_out_transactions": cash_out_transactions,
         "statement_breakdown": _frame_to_records(statement_breakdown),
         "sankey": _build_owner_beneficiary_sankey(expense_rows),
         "internal_review": internal_review,
         "taxonomy": _taxonomy(),
         "category_review": category_review,
+        "statement_coverage": build_statement_coverage_report(),
+        "statement_totals_check": build_statement_totals_check(),
     }

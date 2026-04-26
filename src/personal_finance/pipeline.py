@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,7 @@ from personal_finance.extraction_merge import merge_extraction_dataframes, summa
 from personal_finance.ocr import MINERU_AVAILABLE, batch_ensure_pdf_markdown, ocr_pdf_to_markdown
 from personal_finance.parsers.rbc import parse_rbc_markdown
 from personal_finance.parsers.rbc_pdf import parse_rbc_pdf
+from personal_finance.statement_coverage import deduped_statement_paths
 
 
 def _migrate_legacy_cache_layout() -> None:
@@ -84,14 +86,9 @@ def clear_regenerable_cache() -> dict[str, int]:
 
 
 def discover_statement_files() -> list[Path]:
+    """Return deduped statement paths (one per logical RBC export; drops ``-1`` / ``-2-1`` duplicate filenames)."""
     ensure_directories()
-    discovered = [
-        path
-        for root in (INPUT_STATEMENTS_DIR, UPLOAD_DIR)
-        for path in root.iterdir()
-        if path.is_file() and path.suffix.lower() in SUPPORTED_UPLOAD_SUFFIXES
-    ]
-    return sorted(discovered, key=lambda path: (path.parent.name, path.name))
+    return sorted(deduped_statement_paths(), key=lambda path: (path.parent.name, path.name))
 
 
 def save_uploaded_files(files: Iterable[tuple[str, bytes]]) -> list[Path]:
@@ -354,12 +351,25 @@ def _apply_internal_labels(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _description_fingerprint_for_dedupe(desc: object) -> str:
+    """Normalize and strip statement boilerplate so OCR/PDF duplicate lines collapse."""
+    t = normalize_text(str(desc or ""))
+    t_low = t.lower()
+    t = re.sub(r"\b\d+\s+of\s+\d+\b.*", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"your rbc personal banking account statement.*", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"details of your account activity.*", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bRBPDA[0-9A-Z_-]+\b", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t[:300] if len(t) > 300 else t
+
+
 def _dedupe_transactions(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
 
     df = df.copy()
     df["transaction_date_key"] = df["transaction_date"].dt.strftime("%Y-%m-%d").fillna("")
+    df["_desc_fp"] = df["description"].map(_description_fingerprint_for_dedupe)
     df["row_key"] = (
         df["statement_id"].fillna("")
         + "|"
@@ -367,14 +377,20 @@ def _dedupe_transactions(df: pd.DataFrame) -> pd.DataFrame:
         + "|"
         + df["transaction_date_key"]
         + "|"
-        + df["description"].fillna("")
+        + df["_desc_fp"]
         + "|"
-        + df["reference"].fillna("")
+        + df["reference"].fillna("").astype(str).str.strip()
         + "|"
         + df["amount"].round(2).astype(str)
     )
-    df = df.drop_duplicates(subset=["row_key"]).drop(columns=["transaction_date_key", "row_key"])
+    df = df.drop_duplicates(subset=["row_key"]).drop(columns=["transaction_date_key", "row_key", "_desc_fp"])
     return df
+
+
+def _dedupe_by_tx_key(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "tx_key" not in df.columns:
+        return df
+    return df.drop_duplicates(subset=["tx_key"], keep="first").reset_index(drop=True)
 
 
 def _enrich_transactions(df: pd.DataFrame) -> pd.DataFrame:
@@ -739,6 +755,7 @@ def rebuild_dataset(
     combined = _dedupe_transactions(combined)
     emit("categorizing", "Applying category rules", P_CATEGORIZE)
     combined = _enrich_transactions(combined)
+    combined = _dedupe_by_tx_key(combined)
     emit("matching", "Reconciling internal transfers", P_MATCH)
     combined = _match_internal_transfers(combined)
     combined = _match_internal_transfers_second_pass(combined)
@@ -774,6 +791,8 @@ def load_transactions() -> pd.DataFrame:
             df["tx_key"] = transaction_key_series(df)
         except (TypeError, ValueError, KeyError):
             df["tx_key"] = ""
+    if not df.empty and "tx_key" in df.columns:
+        df = df.drop_duplicates(subset=["tx_key"], keep="first").reset_index(drop=True)
     if "category_source" not in df.columns:
         df["category_source"] = "auto"
     if "extraction_confidence" not in df.columns:

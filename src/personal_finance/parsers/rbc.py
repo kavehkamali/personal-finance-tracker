@@ -119,7 +119,7 @@ def _extract_metadata(markdown_text: str, source_path: Path) -> dict[str, object
     filename_lower = decoded_name.lower()
     if "credit line" in filename_lower or "line of credit" in filename_lower:
         account_name = "RBC Credit Line"
-        statement_type = "credit_card"
+        statement_type = "credit_line"
     elif "mastercard" in filename_lower:
         account_name = "RBC MasterCard"
         statement_type = "credit_card"
@@ -274,6 +274,7 @@ def _parse_credit_card_table(rows: list[list[str]], metadata: dict[str, object],
             "description": normalized_description,
             "reference": embedded_reference,
             "amount": amount,
+            "balance": None,
             "currency": "CAD",
             "statement_start": metadata["statement_start"],
             "statement_end": metadata["statement_end"],
@@ -319,6 +320,10 @@ def _parse_bank_table(rows: list[list[str]], metadata: dict[str, object], contex
         else:
             amount = -abs(_parse_amount(debit))
 
+        bal_val: float | None = None
+        if str(balance).strip():
+            bal_val = _parse_amount(balance)
+
         reference, normalized_description = _extract_reference_and_description(description)
         records.append(
             {
@@ -345,10 +350,11 @@ def _parse_bank_table(rows: list[list[str]], metadata: dict[str, object], contex
                 "description": normalized_description,
                 "reference": reference,
                 "amount": amount,
+                "balance": bal_val,
                 "currency": "CAD",
                 "statement_start": metadata["statement_start"],
                 "statement_end": metadata["statement_end"],
-                "notes": balance,
+                "notes": "",
             }
         )
 

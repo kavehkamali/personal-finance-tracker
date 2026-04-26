@@ -23,6 +23,7 @@ PIPELINE_META_JSON = PROCESSED_DIR / "pipeline_meta.json"
 CATEGORY_RULES_JSON = SETTINGS_DIR / "category_rules.json"
 MERCHANT_ALIASES_JSON = SETTINGS_DIR / "merchant_aliases.json"
 TRANSACTION_OVERRIDES_JSON = SETTINGS_DIR / "transaction_overrides.json"
+STATEMENT_COVERAGE_JSON = SETTINGS_DIR / "statement_coverage.json"
 
 APP_NAME = "PersonalFinance"
 # MinerU VLM on Apple Silicon: vlm-mlx-engine (MLX, local GPU). See README "VLMs on Mac".

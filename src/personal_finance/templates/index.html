@@ -205,6 +205,39 @@
         <div id="status-banner" class="status-banner status-banner--error" role="alert" hidden></div>
       </section>
 
+      <section class="section-block" data-dash-section="statements">
+        <div class="dash-panel-wrap" data-dash-panel="panel-statement-coverage">
+          <div class="section-heading mint-section-head">
+            <h2 class="mint-section-title">Statement file coverage</h2>
+            <p class="mint-section-lead" id="statement-coverage-lead">Loading…</p>
+          </div>
+          <article class="card card-full mint-card">
+            <div class="card-head mint-card-head">
+              <h3 class="mint-card-title">Expected accounts per month</h3>
+              <p class="mint-card-desc">
+                Scans <code>input_statements/</code> (and collapses duplicate downloads: same account + statement date with
+                <code>-1</code> / <code>-2-1</code> suffixes become one file; uploads are ignored if that logical PDF exists in
+                <code>input_statements</code>). Month = <strong>YYYY-MM</strong> from the date in the filename. Defaults: 4 chequing, 1 Visa, 1 MasterCard.
+              </p>
+            </div>
+            <p id="statement-coverage-caption" class="statement-coverage-caption"></p>
+            <div id="statement-coverage-unrecognized" class="statement-coverage-unrecognized" hidden></div>
+            <div id="statement-coverage-table" class="table-panel table-panel--scroll statement-coverage-wrap"></div>
+          </article>
+        </div>
+
+        <div class="dash-panel-wrap" data-dash-panel="panel-statement-totals">
+          <article class="card card-full mint-card">
+            <div class="card-head mint-card-head">
+              <h3 class="mint-card-title">Statement totals vs extracted rows</h3>
+              <p class="mint-card-desc" id="statement-totals-lead">Loading…</p>
+            </div>
+            <p id="statement-totals-caption" class="statement-coverage-caption"></p>
+            <div id="statement-totals-table" class="table-panel table-panel--scroll statement-coverage-wrap"></div>
+          </article>
+        </div>
+      </section>
+
       <section class="section-block" data-dash-section="overview">
         <div class="dash-panel-wrap" data-dash-panel="panel-overview">
           <div class="section-heading mint-section-head">
@@ -223,7 +256,7 @@
         </div>
 
         <section class="chart-grid" id="chart-grid">
-          <article class="card card-hero mint-card mint-card--hero" data-dash-panel="chart-monthly">
+          <article class="card card-hero mint-card mint-card--hero" data-dash-panel="chart-monthly" data-chart-time="trend">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Monthly spend trend</h3>
               <p class="mint-card-desc">Area + points — pick a <strong>year</strong> and <strong>month</strong> in the sidebar for daily detail.</p>
@@ -231,7 +264,7 @@
             <div id="monthly-chart" class="chart"></div>
           </article>
 
-          <article class="card card-compact mint-card" data-dash-panel="chart-category-donut">
+          <article class="card card-compact mint-card" data-dash-panel="chart-category-donut" data-chart-time="category-donut">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Category mix</h3>
               <p class="mint-card-desc">Share of spend (top categories).</p>
@@ -239,21 +272,21 @@
             <div id="chart-category-donut" class="chart chart--donut"></div>
           </article>
 
-          <article class="card card-compact mint-card" data-dash-panel="chart-necessity">
+          <article class="card card-compact mint-card" data-dash-panel="chart-necessity" data-chart-time="necessity">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">By need level</h3>
             </div>
             <div id="necessity-chart" class="chart"></div>
           </article>
 
-          <article class="card card-compact mint-card" data-dash-panel="chart-beneficiary">
+          <article class="card card-compact mint-card" data-dash-panel="chart-beneficiary" data-chart-time="beneficiary">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">By beneficiary</h3>
             </div>
             <div id="beneficiary-chart" class="chart"></div>
           </article>
 
-          <article class="card card-wide mint-card" data-dash-panel="chart-treemap">
+          <article class="card card-wide mint-card" data-dash-panel="chart-treemap" data-chart-time="treemap">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Category → merchant</h3>
               <p class="mint-card-desc">Treemap: rectangle size = spend. Click path bar to zoom out.</p>
@@ -261,7 +294,7 @@
             <div id="chart-treemap" class="chart chart--tall"></div>
           </article>
 
-          <article class="card card-full mint-card" data-dash-panel="chart-sankey">
+          <article class="card card-full mint-card" data-dash-panel="chart-sankey" data-chart-time="sankey">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Money flow</h3>
               <p class="mint-card-desc">Sankey: owner → beneficiary → category (expenses in scope).</p>
@@ -269,7 +302,7 @@
             <div id="chart-sankey" class="chart chart--sankey"></div>
           </article>
 
-          <article class="card card-wide mint-card" data-dash-panel="chart-sunburst">
+          <article class="card card-wide mint-card" data-dash-panel="chart-sunburst" data-chart-time="sunburst">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Beneficiary → category → merchant</h3>
               <p class="mint-card-desc">Sunburst: click segments to drill; double-click center to step up.</p>
@@ -277,7 +310,7 @@
             <div id="chart-sunburst" class="chart chart--tall"></div>
           </article>
 
-          <article class="card card-compact mint-card" data-dash-panel="chart-weekday">
+          <article class="card card-compact mint-card" data-dash-panel="chart-weekday" data-chart-time="weekday">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">By weekday</h3>
               <p class="mint-card-desc">Where spend lands in the week.</p>
@@ -285,7 +318,7 @@
             <div id="chart-weekday" class="chart"></div>
           </article>
 
-          <article class="card card-wide mint-card" data-dash-panel="chart-necessity-monthly">
+          <article class="card card-wide mint-card" data-dash-panel="chart-necessity-monthly" data-chart-time="necessity-monthly">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Need level by month</h3>
               <p class="mint-card-desc">One month selected → horizontal bars for that month.</p>
@@ -293,7 +326,7 @@
             <div id="necessity-monthly-chart" class="chart"></div>
           </article>
 
-          <article class="card card-wide mint-card" data-dash-panel="chart-beneficiary-monthly">
+          <article class="card card-wide mint-card" data-dash-panel="chart-beneficiary-monthly" data-chart-time="beneficiary-monthly">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Beneficiary over time</h3>
               <p class="mint-card-desc">One month selected → bars per beneficiary for that month.</p>
@@ -301,14 +334,14 @@
             <div id="beneficiary-monthly-chart" class="chart"></div>
           </article>
 
-          <article class="card card-wide mint-card" data-dash-panel="chart-owner-beneficiary">
+          <article class="card card-wide mint-card" data-dash-panel="chart-owner-beneficiary" data-chart-time="owner-beneficiary">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Owner vs beneficiary</h3>
             </div>
             <div id="owner-beneficiary-chart" class="chart"></div>
           </article>
 
-          <article class="card card-compact mint-card" data-dash-panel="chart-category">
+          <article class="card card-compact mint-card" data-dash-panel="chart-category" data-chart-time="category-bar">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Categories (ranked)</h3>
               <p class="mint-card-desc">Horizontal bars — compare to donut above.</p>
@@ -316,14 +349,14 @@
             <div id="category-chart" class="chart"></div>
           </article>
 
-          <article class="card card-compact mint-card" data-dash-panel="chart-flow">
+          <article class="card card-compact mint-card" data-dash-panel="chart-flow" data-chart-time="flow">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Cash flow type</h3>
             </div>
             <div id="flow-chart" class="chart"></div>
           </article>
 
-          <article class="card card-wide mint-card" data-dash-panel="chart-stacked">
+          <article class="card card-wide mint-card" data-dash-panel="chart-stacked" data-chart-time="stacked">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Category trends</h3>
               <p class="mint-card-desc">Stacked over months, or ranked categories when a single month is in scope.</p>
@@ -331,35 +364,35 @@
             <div id="stacked-chart" class="chart"></div>
           </article>
 
-          <article class="card card-wide mint-card" data-dash-panel="chart-waterfall">
+          <article class="card card-wide mint-card" data-dash-panel="chart-waterfall" data-chart-time="waterfall">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Top categories</h3>
             </div>
             <div id="waterfall-chart" class="chart"></div>
           </article>
 
-          <article class="card card-compact mint-card" data-dash-panel="chart-owner">
+          <article class="card card-compact mint-card" data-dash-panel="chart-owner" data-chart-time="owner">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">By owner</h3>
             </div>
             <div id="owner-chart" class="chart"></div>
           </article>
 
-          <article class="card card-compact mint-card" data-dash-panel="chart-account">
+          <article class="card card-compact mint-card" data-dash-panel="chart-account" data-chart-time="account">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">By account</h3>
             </div>
             <div id="account-chart" class="chart"></div>
           </article>
 
-          <article class="card card-wide mint-card" data-dash-panel="chart-merchant">
+          <article class="card card-wide mint-card" data-dash-panel="chart-merchant" data-chart-time="merchant">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Top merchants</h3>
             </div>
             <div id="merchant-chart" class="chart"></div>
           </article>
 
-          <article class="card card-wide mint-card" data-dash-panel="chart-daily">
+          <article class="card card-wide mint-card" data-dash-panel="chart-daily" data-chart-time="daily">
             <div class="card-head mint-card-head">
               <h3 class="mint-card-title">Daily spending</h3>
             </div>
@@ -409,7 +442,9 @@
       <section class="section-block" data-dash-section="ledger">
         <div class="section-heading mint-section-head">
           <h2 class="mint-section-title">Ledger &amp; transfers</h2>
-          <p class="mint-section-lead">Reconciliation tables plus the latest filtered transactions.</p>
+          <p class="mint-section-lead">
+            Reconciliation, <strong>cash in</strong> (payroll-style income only — not shop refunds), <strong>cash out</strong> (ATM-style withdrawals and other debits that are not bills, purchases, or mortgages), and recent activity. Between-account moves are excluded.
+          </p>
         </div>
 
         <section class="table-grid">
@@ -425,6 +460,22 @@
               <h3 class="mint-card-title">Unmatched</h3>
             </div>
             <div id="unmatched-internal" class="table-panel"></div>
+          </article>
+
+          <article class="card card-half mint-card" data-dash-panel="table-cash-in">
+            <div class="card-head mint-card-head">
+              <h3 class="mint-card-title">Cash in (true)</h3>
+              <p class="mint-card-desc" id="cash-in-ledger-caption">Loading…</p>
+            </div>
+            <div id="cash-in-transactions" class="table-panel table-panel--scroll"></div>
+          </article>
+
+          <article class="card card-half mint-card" data-dash-panel="table-cash-out">
+            <div class="card-head mint-card-head">
+              <h3 class="mint-card-title">Cash out (hard)</h3>
+              <p class="mint-card-desc" id="cash-out-ledger-caption">Loading…</p>
+            </div>
+            <div id="cash-out-transactions" class="table-panel table-panel--scroll"></div>
           </article>
 
           <article class="card card-full mint-card" data-dash-panel="table-recent">

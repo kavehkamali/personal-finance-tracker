@@ -915,6 +915,51 @@ button {
   margin-bottom: 0;
 }
 
+.chart-time-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: var(--mint-soft);
+  border-radius: var(--radius);
+  border: 1px solid var(--border-light);
+}
+
+.chart-time-bar-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.chart-time-sublabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+.chart-time-select {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-strong);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.chart-time-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: var(--page-bg);
+}
+
 .mint-card-head--row {
   display: flex;
   align-items: center;
@@ -1328,6 +1373,16 @@ td {
   color: var(--mint-dark);
   font-size: 0.75rem;
   font-weight: 600;
+}
+
+.pill--in {
+  background: #e3f4ea;
+  color: #146c3a;
+}
+
+.pill--out {
+  background: #fdecea;
+  color: #a63d32;
 }
 
 .empty-state {
@@ -2382,4 +2437,60 @@ article.card.panel-dragging {
 .cat-review-empty-sub strong {
   color: var(--text-strong);
   font-weight: 600;
+}
+
+/* Statement file coverage (monthly PDF checklist) */
+.statement-coverage-caption {
+  margin: 0 0 12px;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 52rem;
+}
+
+.statement-coverage-unrecognized {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(232, 93, 76, 0.35);
+  background: rgba(232, 93, 76, 0.06);
+  font-size: 0.8125rem;
+  color: var(--text-strong);
+}
+
+.statement-coverage-ul {
+  margin: 8px 0 0;
+  padding-left: 1.25rem;
+}
+
+.statement-coverage-wrap .coverage-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.statement-coverage-wrap .coverage-pill--ok {
+  background: var(--mint-soft);
+  color: var(--mint-dark);
+}
+
+.statement-coverage-wrap .coverage-pill--warn {
+  background: rgba(230, 162, 60, 0.18);
+  color: #8a5a00;
+}
+
+.statement-coverage-wrap td.coverage-issues {
+  font-size: 0.75rem;
+  color: var(--muted);
+  max-width: 28rem;
+  line-height: 1.4;
+}
+
+.statement-coverage-wrap td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }

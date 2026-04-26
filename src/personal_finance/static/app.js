@@ -118,6 +118,15 @@ function normalizeSummary(raw) {
     monthly_category_breakdown: arr(raw.monthly_category_breakdown),
     monthly_necessity_breakdown: arr(raw.monthly_necessity_breakdown),
     monthly_beneficiary_breakdown: arr(raw.monthly_beneficiary_breakdown),
+    monthly_merchant_breakdown: arr(raw.monthly_merchant_breakdown),
+    monthly_owner_breakdown: arr(raw.monthly_owner_breakdown),
+    monthly_account_breakdown: arr(raw.monthly_account_breakdown),
+    monthly_flow_breakdown: arr(raw.monthly_flow_breakdown),
+    monthly_weekday_breakdown: arr(raw.monthly_weekday_breakdown),
+    monthly_treemap_breakdown: arr(raw.monthly_treemap_breakdown),
+    monthly_sunburst_breakdown: arr(raw.monthly_sunburst_breakdown),
+    monthly_owner_beneficiary_breakdown: arr(raw.monthly_owner_beneficiary_breakdown),
+    monthly_sankey: Array.isArray(raw.monthly_sankey) ? raw.monthly_sankey : [],
     merchant_breakdown: arr(raw.merchant_breakdown),
     owner_breakdown: arr(raw.owner_breakdown),
     account_breakdown: arr(raw.account_breakdown),
@@ -135,6 +144,8 @@ function normalizeSummary(raw) {
     matched_transfers: arr(raw.matched_transfers),
     unmatched_internal: arr(raw.unmatched_internal),
     recent_transactions: arr(raw.recent_transactions),
+    cash_in_transactions: arr(raw.cash_in_transactions),
+    cash_out_transactions: arr(raw.cash_out_transactions),
     filter_dimensions:
       raw.filter_dimensions && typeof raw.filter_dimensions === "object"
         ? {
@@ -168,6 +179,68 @@ function normalizeSummary(raw) {
           }
         : { categories: [], necessities: [], beneficiaries: [] },
     category_review: arr(raw.category_review),
+    statement_coverage:
+      raw.statement_coverage && typeof raw.statement_coverage === "object"
+        ? {
+            expectations:
+              raw.statement_coverage.expectations && typeof raw.statement_coverage.expectations === "object"
+                ? raw.statement_coverage.expectations
+                : {},
+            expectations_source: String(raw.statement_coverage.expectations_source || ""),
+            caption: String(raw.statement_coverage.caption || ""),
+            unique_pdf_count: Number(raw.statement_coverage.unique_pdf_count) || 0,
+            duplicate_pdf_copies_ignored: Number(raw.statement_coverage.duplicate_pdf_copies_ignored) || 0,
+            unrecognized_files: arr(raw.statement_coverage.unrecognized_files),
+            months: arr(raw.statement_coverage.months).map((m) => ({
+              month_key: String(m?.month_key || ""),
+              chequing_last4: arr(m?.chequing_last4),
+              visa_last4: arr(m?.visa_last4),
+              mastercard_last4: arr(m?.mastercard_last4),
+              credit_line_last4: arr(m?.credit_line_last4),
+              pdf_count: Number(m?.pdf_count) || 0,
+              ok: Boolean(m?.ok),
+              issues: arr(m?.issues),
+            })),
+          }
+        : {
+            expectations: {},
+            expectations_source: "",
+            caption: "",
+            unique_pdf_count: 0,
+            duplicate_pdf_copies_ignored: 0,
+            unrecognized_files: [],
+            months: [],
+          },
+    statement_totals_check:
+      raw.statement_totals_check && typeof raw.statement_totals_check === "object"
+        ? {
+            tolerance: Number(raw.statement_totals_check.tolerance) || 0.02,
+            caption: String(raw.statement_totals_check.caption || ""),
+            ok_count: Number(raw.statement_totals_check.ok_count) || 0,
+            file_count: Number(raw.statement_totals_check.file_count) || 0,
+            files: arr(raw.statement_totals_check.files).map((f) => ({
+              filename: String(f?.filename || ""),
+              stem: String(f?.stem || ""),
+              last4: f?.last4 != null ? String(f.last4) : null,
+              kind: String(f?.kind || ""),
+              row_count: Number(f?.row_count) || 0,
+              statement_in: f?.statement_in != null ? Number(f.statement_in) : null,
+              statement_out: f?.statement_out != null ? Number(f.statement_out) : null,
+              parsed_in: f?.parsed_in != null ? Number(f.parsed_in) : null,
+              parsed_out: f?.parsed_out != null ? Number(f.parsed_out) : null,
+              diff_in: f?.diff_in != null ? Number(f.diff_in) : null,
+              diff_out: f?.diff_out != null ? Number(f.diff_out) : null,
+              ok: Boolean(f?.ok),
+              notes: String(f?.notes || ""),
+            })),
+          }
+        : {
+            tolerance: 0.02,
+            caption: "",
+            ok_count: 0,
+            file_count: 0,
+            files: [],
+          },
   };
 }
 
@@ -886,7 +959,7 @@ function wirePlotlyChartDrilldown(hasSpendData) {
 
   document.getElementById("stacked-chart")?.on?.("plotly_click", (ev) => {
     const pt = ev?.points?.[0];
-    const name = pt?.fullData?.name ?? pt?.data?.name;
+    const name = pt?.fullData?.name ?? pt?.data?.name ?? pt?.y;
     if (name != null) drilldownFromSidebarSelect("category-filter", name, "Category");
   });
 
@@ -915,6 +988,361 @@ function wirePlotlyChartDrilldown(hasSpendData) {
     } else {
       drilldownFromMerchantChart(lab);
     }
+  });
+}
+
+/** Per-chart basis: scope total, average per month, or one month (localStorage). */
+const CHART_TIMING_KEY = "pf-chart-time-v1";
+
+function chartTimingSpec(key) {
+  /** When false, Month dropdown is shown but disabled (always visible on every card). */
+  if (key === "trend") {
+    return {
+      modes: [
+        { value: "actual", label: "Monthly totals" },
+        { value: "roll3", label: "3-mo rolling avg" },
+      ],
+      monthApplies: () => false,
+    };
+  }
+  if (key === "sankey" || key === "daily") {
+    return {
+      modes: [
+        { value: "scope", label: "Full scope" },
+        { value: "month", label: "Single month" },
+      ],
+      monthApplies: (m) => m === "month",
+    };
+  }
+  if (key === "stacked") {
+    return {
+      modes: [
+        { value: "scope", label: "Over time" },
+        { value: "avg", label: "Avg / month" },
+        { value: "month", label: "One month" },
+      ],
+      monthApplies: (m) => m === "month",
+    };
+  }
+  if (key === "necessity-monthly" || key === "beneficiary-monthly") {
+    return {
+      modes: [
+        { value: "scope", label: "All months" },
+        { value: "month", label: "One month" },
+      ],
+      monthApplies: (m) => m === "month",
+    };
+  }
+  return {
+    modes: [
+      { value: "scope", label: "Scope total" },
+      { value: "avg", label: "Avg / month" },
+      { value: "month", label: "One month" },
+    ],
+    monthApplies: (m) => m === "month",
+  };
+}
+
+function loadChartTimingState() {
+  try {
+    const raw = localStorage.getItem(CHART_TIMING_KEY);
+    if (raw) {
+      const o = JSON.parse(raw);
+      return typeof o === "object" && o ? o : {};
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  return {};
+}
+
+function saveChartTimingState(obj) {
+  try {
+    localStorage.setItem(CHART_TIMING_KEY, JSON.stringify(obj));
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function getChartTiming(key) {
+  const st = loadChartTimingState();
+  const def = key === "trend" ? { mode: "actual", month: "" } : { mode: "scope", month: "" };
+  const cur = st[key];
+  if (!cur || typeof cur !== "object") return { ...def };
+  const spec = chartTimingSpec(key);
+  const modeOk = spec.modes.some((m) => m.value === cur.mode);
+  return {
+    mode: modeOk ? cur.mode : def.mode,
+    month: typeof cur.month === "string" ? cur.month : "",
+  };
+}
+
+function setChartTiming(key, patch) {
+  const st = loadChartTimingState();
+  const prev = getChartTiming(key);
+  st[key] = { ...prev, ...patch };
+  saveChartTimingState(st);
+}
+
+function syncTimingMonthControl(bar, key) {
+  const spec = chartTimingSpec(key);
+  const modeSel = bar.querySelector(".chart-time-mode");
+  const monthSel = bar.querySelector(".chart-time-month");
+  if (!modeSel || !monthSel) return;
+  monthSel.hidden = false;
+  const months = state.summary?.filters?.months || [];
+  const applies = spec.monthApplies(modeSel.value);
+  monthSel.disabled = !applies || months.length === 0;
+  monthSel.title = !applies
+    ? 'Set Basis to "One month" or "Single month" to choose a month.'
+    : months.length === 0
+      ? "No months in the current scope."
+      : "";
+}
+
+function aggregateLabelsFromMonthly(monthlyRows, labelField, timing, monthCount) {
+  const by = new Map();
+  const add = (label, v) => {
+    const k = String(label);
+    by.set(k, (by.get(k) || 0) + Number(v || 0));
+  };
+  if (timing.mode === "month" && timing.month) {
+    monthlyRows.filter((r) => String(r.month) === timing.month).forEach((r) => add(r[labelField], r.value));
+  } else {
+    monthlyRows.forEach((r) => add(r[labelField], r.value));
+  }
+  let rows = [...by.entries()].map(([label, value]) => ({ label, value }));
+  if (timing.mode === "avg") {
+    const n = Math.max(1, monthCount);
+    rows = rows.map((r) => ({ label: r.label, value: r.value / n }));
+  }
+  return sortBreakdownDesc(rows);
+}
+
+function labelBreakdownFromMonthly(summary, chartKey, labelField, monthlyKey, fallbackRows) {
+  const timing = getChartTiming(chartKey);
+  const mc = Math.max(1, Number(summary.overview?.expense_month_count || 1));
+  const mrows = summary[monthlyKey] || [];
+  if (timing.mode === "scope" || !mrows.length) {
+    return sortBreakdownDesc(fallbackRows);
+  }
+  return aggregateLabelsFromMonthly(mrows, labelField, timing, mc);
+}
+
+function labelFlowFromMonthly(summary, chartKey, fallbackRows) {
+  const timing = getChartTiming(chartKey);
+  const mc = Math.max(1, Number(summary.overview?.expense_month_count || 1));
+  const mrows = summary.monthly_flow_breakdown || [];
+  if (timing.mode === "scope" || !mrows.length) {
+    return sortBreakdownDesc(fallbackRows);
+  }
+  const by = new Map();
+  const add = (label, v) => {
+    const k = String(label);
+    by.set(k, (by.get(k) || 0) + Number(v || 0));
+  };
+  if (timing.mode === "month" && timing.month) {
+    mrows.filter((r) => String(r.month) === timing.month).forEach((r) => add(r.flow_type, r.value));
+  } else {
+    mrows.forEach((r) => add(r.flow_type, r.value));
+  }
+  let rows = [...by.entries()].map(([label, value]) => ({ label, value }));
+  if (timing.mode === "avg") {
+    const n = Math.max(1, mc);
+    rows = rows.map((r) => ({ label: r.label, value: r.value / n }));
+  }
+  return sortBreakdownDesc(rows);
+}
+
+function treemapRowsForTiming(summary, chartKey) {
+  const timing = getChartTiming(chartKey);
+  const mc = Math.max(1, Number(summary.overview?.expense_month_count || 1));
+  const full = summary.treemap_breakdown || [];
+  const mrows = summary.monthly_treemap_breakdown || [];
+  if (timing.mode === "month" && timing.month && mrows.length) {
+    return mrows.filter((r) => String(r.month) === timing.month);
+  }
+  if (timing.mode === "avg" && full.length) {
+    return full.map((r) => ({ ...r, value: Number(r.value || 0) / mc }));
+  }
+  return full;
+}
+
+function sunburstRowsForTiming(summary, chartKey) {
+  const timing = getChartTiming(chartKey);
+  const mc = Math.max(1, Number(summary.overview?.expense_month_count || 1));
+  const full = summary.sunburst_breakdown || [];
+  const mrows = summary.monthly_sunburst_breakdown || [];
+  if (timing.mode === "month" && timing.month && mrows.length) {
+    return mrows.filter((r) => String(r.month) === timing.month);
+  }
+  if (timing.mode === "avg" && full.length) {
+    return full.map((r) => ({ ...r, value: Number(r.value || 0) / mc }));
+  }
+  return full;
+}
+
+function ownerBenRowsForTiming(summary, chartKey) {
+  const timing = getChartTiming(chartKey);
+  const mc = Math.max(1, Number(summary.overview?.expense_month_count || 1));
+  const full = summary.owner_beneficiary_breakdown || [];
+  const mrows = summary.monthly_owner_beneficiary_breakdown || [];
+  if (timing.mode === "scope") {
+    return full;
+  }
+  if (!mrows.length) {
+    if (timing.mode === "avg" && full.length) {
+      return full.map((r) => ({ ...r, value: Number(r.value || 0) / mc }));
+    }
+    return full;
+  }
+  const by = new Map();
+  const add = (o, b, v) => {
+    const k = `${o}|||${b}`;
+    by.set(k, (by.get(k) || 0) + Number(v || 0));
+  };
+  if (timing.mode === "month" && timing.month) {
+    mrows.filter((r) => String(r.month) === timing.month).forEach((r) => add(r.owner, r.beneficiary, r.value));
+  } else if (timing.mode === "avg") {
+    mrows.forEach((r) => add(r.owner, r.beneficiary, r.value));
+    return [...by.entries()].map(([k, value]) => {
+      const [owner, beneficiary] = k.split("|||");
+      return { owner, beneficiary, value: value / mc };
+    });
+  } else {
+    return full;
+  }
+  return [...by.entries()].map(([k, value]) => {
+    const [owner, beneficiary] = k.split("|||");
+    return { owner, beneficiary, value };
+  });
+}
+
+function buildOwnerBeneficiaryMatrix(rows) {
+  const owners = [...new Set(rows.map((r) => r.owner))].sort();
+  const beneficiaries = [...new Set(rows.map((r) => r.beneficiary))].sort();
+  const z = owners.map((owner) =>
+    beneficiaries.map(
+      (beneficiary) => rows.find((row) => row.owner === owner && row.beneficiary === beneficiary)?.value || 0,
+    ),
+  );
+  return { owners, beneficiaries, z };
+}
+
+function dailyRowsForTiming(summary, chartKey) {
+  const timing = getChartTiming(chartKey);
+  const rows = summary.daily_expenses || [];
+  if (timing.mode !== "month" || !timing.month) return rows;
+  const prefix = `${timing.month}-`;
+  return rows.filter((r) => String(r.label || r.date || "").startsWith(prefix));
+}
+
+function buildWaterfallFromCategories(catRows) {
+  const sorted = sortBreakdownDesc(catRows);
+  const top = sorted.slice(0, 6);
+  const otherVal = sorted.slice(6).reduce((s, r) => s + Number(r.value || 0), 0);
+  const records = top.map((r) => ({ label: r.label, value: round2(r.value) }));
+  if (otherVal > 0) records.push({ label: "Other Categories", value: round2(otherVal) });
+  return records;
+}
+
+function round2(v) {
+  return Math.round(Number(v || 0) * 100) / 100;
+}
+
+function sankeyForTiming(summary) {
+  const timing = getChartTiming("sankey");
+  if (timing.mode !== "month" || !timing.month) {
+    return summary.sankey || { nodes: [], links: [] };
+  }
+  const hit = (summary.monthly_sankey || []).find((x) => String(x.month) === timing.month);
+  if (hit && Array.isArray(hit.nodes)) {
+    return { nodes: hit.nodes, links: hit.links || [] };
+  }
+  return { nodes: [], links: [] };
+}
+
+function ensureAllChartTimingBars() {
+  document.querySelectorAll("[data-chart-time]").forEach((article) => {
+    const key = article.getAttribute("data-chart-time");
+    if (!key) return;
+    const existingBar = article.querySelector(".chart-time-bar");
+    if (existingBar) {
+      if (existingBar.querySelector(".chart-time-month") && existingBar.querySelector(".chart-time-sublabel")) return;
+      existingBar.remove();
+    }
+    const head = article.querySelector(".mint-card-head");
+    if (!head) return;
+    const spec = chartTimingSpec(key);
+    const bar = document.createElement("div");
+    bar.className = "chart-time-bar";
+    const lab = document.createElement("span");
+    lab.className = "chart-time-bar-label";
+    lab.textContent = "Basis";
+    const modeSel = document.createElement("select");
+    modeSel.className = "chart-time-select chart-time-mode";
+    modeSel.setAttribute("data-chart-timing-key", key);
+    modeSel.setAttribute("aria-label", "Chart time basis");
+    spec.modes.forEach((m) => {
+      const o = document.createElement("option");
+      o.value = m.value;
+      o.textContent = m.label;
+      modeSel.appendChild(o);
+    });
+    const monthLab = document.createElement("span");
+    monthLab.className = "chart-time-sublabel";
+    monthLab.textContent = "Month";
+    const monthSel = document.createElement("select");
+    monthSel.className = "chart-time-select chart-time-month";
+    monthSel.setAttribute("data-chart-timing-key", key);
+    monthSel.setAttribute("aria-label", "Month for chart");
+    bar.appendChild(lab);
+    bar.appendChild(modeSel);
+    bar.appendChild(monthLab);
+    bar.appendChild(monthSel);
+    head.appendChild(bar);
+    const cur = getChartTiming(key);
+    modeSel.value = cur.mode;
+    const onChange = () => {
+      if (state.summary) renderCharts(state.summary);
+    };
+    modeSel.addEventListener("change", () => {
+      setChartTiming(key, { mode: modeSel.value });
+      syncTimingMonthControl(bar, key);
+      onChange();
+    });
+    monthSel.addEventListener("change", () => {
+      setChartTiming(key, { month: monthSel.value });
+      onChange();
+    });
+    syncTimingMonthControl(bar, key);
+  });
+}
+
+function refreshChartTimingControls(summary) {
+  const months = summary?.filters?.months || [];
+  document.querySelectorAll(".chart-time-bar").forEach((bar) => {
+    const key = bar.querySelector(".chart-time-mode")?.getAttribute("data-chart-timing-key");
+    if (!key) return;
+    const modeSel = bar.querySelector(".chart-time-mode");
+    const monthSel = bar.querySelector(".chart-time-month");
+    if (modeSel) modeSel.value = getChartTiming(key).mode;
+    if (monthSel) {
+      let t = getChartTiming(key);
+      if (t.month && months.length && !months.includes(t.month)) {
+        setChartTiming(key, { month: months[months.length - 1] });
+        t = getChartTiming(key);
+      }
+      monthSel.innerHTML = months.length
+        ? months.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("")
+        : `<option value="">—</option>`;
+      const pick = t.month && months.includes(t.month) ? t.month : months[0] || "";
+      monthSel.value = pick;
+      if (pick && String(t.month) !== String(pick)) {
+        setChartTiming(key, { month: pick });
+      }
+    }
+    syncTimingMonthControl(bar, key);
   });
 }
 
@@ -1040,26 +1468,70 @@ function renderCharts(summary) {
     return;
   }
 
+  const trendTiming = getChartTiming("trend");
+  const xsTrend = summary.monthly_expenses.map((row) => row.label);
+  const ysTrend = summary.monthly_expenses.map((row) => row.value);
+  const trendTraces = [];
+  if (trendTiming.mode === "roll3" && ysTrend.length >= 3) {
+    const roll = ysTrend.map((_, i) => {
+      const sl = ysTrend.slice(Math.max(0, i - 2), i + 1);
+      return sl.reduce((a, b) => a + b, 0) / sl.length;
+    });
+    trendTraces.push({
+      x: xsTrend,
+      y: ysTrend,
+      type: "scatter",
+      mode: "lines+markers",
+      name: "Month",
+      fill: "tozeroy",
+      fillcolor: "rgba(38, 166, 91, 0.08)",
+      line: { color: PALETTE.grid, width: 1.5, shape: "spline" },
+      marker: { size: 6, color: PALETTE.muted },
+      hovertemplate: "%{x}<br>%{y:$,.2f}<extra></extra>",
+      opacity: 0.65,
+    });
+    trendTraces.push({
+      x: xsTrend,
+      y: roll,
+      type: "scatter",
+      mode: "lines+markers",
+      name: "3-mo avg",
+      line: { color: PALETTE.primary, width: 3, shape: "spline" },
+      marker: { size: 9, color: PALETTE.secondary, line: { width: 1.5, color: "#fff" } },
+      hovertemplate: "%{x}<br>%{y:$,.2f}<extra></extra>",
+    });
+  } else {
+    trendTraces.push({
+      x: xsTrend,
+      y: ysTrend,
+      type: "scatter",
+      mode: "lines+markers",
+      fill: "tozeroy",
+      fillcolor: "rgba(38, 166, 91, 0.14)",
+      line: { color: PALETTE.primary, width: 3, shape: "spline" },
+      marker: { size: 9, color: PALETTE.secondary, line: { width: 1.5, color: "#fff" } },
+      hovertemplate: "%{x}<br>%{y:$,.2f}<extra></extra>",
+    });
+  }
   Plotly.react(
     "monthly-chart",
-    [
-      {
-        x: summary.monthly_expenses.map((row) => row.label),
-        y: summary.monthly_expenses.map((row) => row.value),
-        type: "scatter",
-        mode: "lines+markers",
-        fill: "tozeroy",
-        fillcolor: "rgba(38, 166, 91, 0.14)",
-        line: { color: PALETTE.primary, width: 3, shape: "spline" },
-        marker: { size: 9, color: PALETTE.secondary, line: { width: 1.5, color: "#fff" } },
-        hovertemplate: "%{x}<br>%{y:$,.2f}<extra></extra>",
-      },
-    ],
-    baseLayout(),
+    trendTraces,
+    baseLayout({
+      legend:
+        trendTraces.length > 1
+          ? { orientation: "h", y: 1.06, font: { size: 10 } }
+          : { visible: false },
+    }),
     plotlyConfig,
   );
 
-  const donutCats = sortBreakdownDesc(summary.category_breakdown).slice(0, 12);
+  const donutCats = labelBreakdownFromMonthly(
+    summary,
+    "category-donut",
+    "category",
+    "monthly_category_breakdown",
+    summary.category_breakdown,
+  ).slice(0, 12);
   if (!donutCats.length) {
     emptyChart("chart-category-donut");
   } else {
@@ -1088,7 +1560,13 @@ function renderCharts(summary) {
     );
   }
 
-  const necSorted = sortBreakdownDesc(summary.necessity_breakdown);
+  const necSorted = labelBreakdownFromMonthly(
+    summary,
+    "necessity",
+    "necessity",
+    "monthly_necessity_breakdown",
+    summary.necessity_breakdown,
+  );
   Plotly.react(
     "necessity-chart",
     [
@@ -1105,7 +1583,13 @@ function renderCharts(summary) {
     plotlyConfig,
   );
 
-  const benSorted = sortBreakdownDesc(summary.beneficiary_breakdown);
+  const benSorted = labelBreakdownFromMonthly(
+    summary,
+    "beneficiary",
+    "beneficiary",
+    "monthly_beneficiary_breakdown",
+    summary.beneficiary_breakdown,
+  );
   Plotly.react(
     "beneficiary-chart",
     [
@@ -1124,8 +1608,36 @@ function renderCharts(summary) {
 
   const necessityNames = [...new Set(summary.monthly_necessity_breakdown.map((row) => row.necessity))];
   const necessityMonths = [...new Set(summary.monthly_necessity_breakdown.map((row) => row.month))];
+  const necMoTiming = getChartTiming("necessity-monthly");
   if (!necessityNames.length || !necessityMonths.length) {
     emptyChart("necessity-monthly-chart");
+  } else if (necMoTiming.mode === "month" && necMoTiming.month) {
+    const necOneRows = summary.monthly_necessity_breakdown.filter((row) => String(row.month) === necMoTiming.month);
+    const necOne = sortBreakdownDesc(
+      necOneRows.map((row) => ({ label: row.necessity, value: Number(row.value || 0) })),
+    );
+    if (!necOne.length) {
+      emptyChart("necessity-monthly-chart");
+    } else {
+      Plotly.react(
+        "necessity-monthly-chart",
+        [
+          {
+            type: "bar",
+            orientation: "h",
+            y: necOne.map((row) => row.label),
+            x: necOne.map((row) => row.value),
+            marker: { color: necOne.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]) },
+            hovertemplate: `%{y}<br>%{x:$,.2f}<br>${necMoTiming.month}<extra></extra>`,
+          },
+        ],
+        baseLayout({
+          margin: { l: yMarginForLabels(necOne.map((r) => r.label)), r: 20, t: 14, b: 40 },
+          showlegend: false,
+        }),
+        plotlyConfig,
+      );
+    }
   } else {
     Plotly.react(
       "necessity-monthly-chart",
@@ -1145,8 +1657,36 @@ function renderCharts(summary) {
 
   const beneficiaryNames = [...new Set(summary.monthly_beneficiary_breakdown.map((row) => row.beneficiary))];
   const beneficiaryMonths = [...new Set(summary.monthly_beneficiary_breakdown.map((row) => row.month))];
+  const benMoTiming = getChartTiming("beneficiary-monthly");
   if (!beneficiaryNames.length || !beneficiaryMonths.length) {
     emptyChart("beneficiary-monthly-chart");
+  } else if (benMoTiming.mode === "month" && benMoTiming.month) {
+    const benOneRows = summary.monthly_beneficiary_breakdown.filter((row) => String(row.month) === benMoTiming.month);
+    const benOne = sortBreakdownDesc(
+      benOneRows.map((row) => ({ label: row.beneficiary, value: Number(row.value || 0) })),
+    );
+    if (!benOne.length) {
+      emptyChart("beneficiary-monthly-chart");
+    } else {
+      Plotly.react(
+        "beneficiary-monthly-chart",
+        [
+          {
+            type: "bar",
+            orientation: "h",
+            y: benOne.map((row) => row.label),
+            x: benOne.map((row) => row.value),
+            marker: { color: benOne.map((_, i) => CHART_COLORS[(i + 1) % CHART_COLORS.length]) },
+            hovertemplate: `%{y}<br>%{x:$,.2f}<br>${benMoTiming.month}<extra></extra>`,
+          },
+        ],
+        baseLayout({
+          margin: { l: yMarginForLabels(benOne.map((r) => r.label)), r: 20, t: 14, b: 40 },
+          showlegend: false,
+        }),
+        plotlyConfig,
+      );
+    }
   } else {
     Plotly.react(
       "beneficiary-monthly-chart",
@@ -1166,16 +1706,13 @@ function renderCharts(summary) {
     );
   }
 
-  const owners = [...new Set(summary.owner_beneficiary_breakdown.map((row) => row.owner))];
-  const beneficiaries = [...new Set(summary.owner_beneficiary_breakdown.map((row) => row.beneficiary))];
+  const obMat = buildOwnerBeneficiaryMatrix(ownerBenRowsForTiming(summary, "owner-beneficiary"));
+  const owners = obMat.owners;
+  const beneficiaries = obMat.beneficiaries;
+  const zOb = obMat.z;
   if (!owners.length || !beneficiaries.length) {
     emptyChart("owner-beneficiary-chart");
   } else {
-    const z = owners.map((owner) =>
-      beneficiaries.map(
-        (beneficiary) => summary.owner_beneficiary_breakdown.find((row) => row.owner === owner && row.beneficiary === beneficiary)?.value || 0,
-      ),
-    );
     Plotly.react(
       "owner-beneficiary-chart",
       [
@@ -1183,7 +1720,7 @@ function renderCharts(summary) {
           type: "heatmap",
           x: beneficiaries,
           y: owners,
-          z,
+          z: zOb,
           colorscale: [
             [0, "#f0f7f3"],
             [0.35, "#c5e6d0"],
@@ -1198,7 +1735,13 @@ function renderCharts(summary) {
     );
   }
 
-  const catSorted = sortBreakdownDesc(summary.category_breakdown).slice(0, 14);
+  const catSorted = labelBreakdownFromMonthly(
+    summary,
+    "category-bar",
+    "category",
+    "monthly_category_breakdown",
+    summary.category_breakdown,
+  ).slice(0, 14);
   Plotly.react(
     "category-chart",
     [
@@ -1215,13 +1758,14 @@ function renderCharts(summary) {
     plotlyConfig,
   );
 
-  const flowLabels = summary.flow_breakdown.map((row) => row.label);
+  const flowSorted = labelFlowFromMonthly(summary, "flow", summary.flow_breakdown);
+  const flowLabels = flowSorted.map((row) => row.label);
   Plotly.react(
     "flow-chart",
     [
       {
         x: flowLabels,
-        y: summary.flow_breakdown.map((row) => Math.abs(row.value)),
+        y: flowSorted.map((row) => Math.abs(row.value)),
         type: "bar",
         marker: { color: flowLabels.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]) },
         hovertemplate: "%{x}<br>%{y:$,.2f}<extra></extra>",
@@ -1231,12 +1775,13 @@ function renderCharts(summary) {
     plotlyConfig,
   );
 
+  const stackedTiming = getChartTiming("stacked");
   const categories = [...new Set(summary.monthly_category_breakdown.map((row) => row.category))];
   const months = [...new Set(summary.monthly_category_breakdown.map((row) => row.month))];
   const topCats = categories.slice(0, 8);
   if (!topCats.length || !months.length) {
     emptyChart("stacked-chart");
-  } else {
+  } else if (stackedTiming.mode === "scope") {
     Plotly.react(
       "stacked-chart",
       topCats.map((category, index) => ({
@@ -1253,9 +1798,47 @@ function renderCharts(summary) {
       baseLayout({ legend: { orientation: "h", y: 1.08, font: { size: 10 } } }),
       plotlyConfig,
     );
+  } else {
+    const mcStack = Math.max(1, Number(summary.overview?.expense_month_count || 1));
+    const barRows = aggregateLabelsFromMonthly(
+      summary.monthly_category_breakdown || [],
+      "category",
+      { mode: stackedTiming.mode, month: stackedTiming.month },
+      mcStack,
+    ).slice(0, 14);
+    if (!barRows.length) {
+      emptyChart("stacked-chart");
+    } else {
+      Plotly.react(
+        "stacked-chart",
+        [
+          {
+            type: "bar",
+            orientation: "h",
+            y: barRows.map((row) => row.label),
+            x: barRows.map((row) => row.value),
+            marker: { color: barRows.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]) },
+            hovertemplate: "%{y}<br>%{x:$,.2f}<extra></extra>",
+          },
+        ],
+        baseLayout({
+          margin: { l: yMarginForLabels(barRows.map((r) => r.label)), r: 20, t: 14, b: 40 },
+          showlegend: false,
+        }),
+        plotlyConfig,
+      );
+    }
   }
 
-  if (!summary.waterfall_breakdown.length) {
+  const wfCats = labelBreakdownFromMonthly(
+    summary,
+    "waterfall",
+    "category",
+    "monthly_category_breakdown",
+    summary.category_breakdown,
+  );
+  const wfRows = buildWaterfallFromCategories(wfCats);
+  if (!wfRows.length) {
     emptyChart("waterfall-chart");
   } else {
     Plotly.react(
@@ -1263,9 +1846,9 @@ function renderCharts(summary) {
       [
         {
           type: "waterfall",
-          x: summary.waterfall_breakdown.map((row) => row.label),
-          y: summary.waterfall_breakdown.map((row) => row.value),
-          measure: summary.waterfall_breakdown.map(() => "relative"),
+          x: wfRows.map((row) => row.label),
+          y: wfRows.map((row) => row.value),
+          measure: wfRows.map(() => "relative"),
           connector: { line: { color: PALETTE.grid } },
           increasing: { marker: { color: PALETTE.primary } },
           decreasing: { marker: { color: PALETTE.coral } },
@@ -1276,12 +1859,19 @@ function renderCharts(summary) {
     );
   }
 
+  const ownerSorted = labelBreakdownFromMonthly(
+    summary,
+    "owner",
+    "owner",
+    "monthly_owner_breakdown",
+    summary.owner_breakdown,
+  );
   Plotly.react(
     "owner-chart",
     [
       {
-        x: summary.owner_breakdown.map((row) => row.label),
-        y: summary.owner_breakdown.map((row) => row.value),
+        x: ownerSorted.map((row) => row.label),
+        y: ownerSorted.map((row) => row.value),
         type: "bar",
         marker: { color: PALETTE.blue },
         hovertemplate: "%{x}<br>%{y:$,.2f}<extra></extra>",
@@ -1291,7 +1881,13 @@ function renderCharts(summary) {
     plotlyConfig,
   );
 
-  const acctSorted = sortBreakdownDesc(summary.account_breakdown);
+  const acctSorted = labelBreakdownFromMonthly(
+    summary,
+    "account",
+    "account_label",
+    "monthly_account_breakdown",
+    summary.account_breakdown,
+  );
   Plotly.react(
     "account-chart",
     [
@@ -1308,7 +1904,14 @@ function renderCharts(summary) {
     plotlyConfig,
   );
 
-  const merch = [...summary.merchant_breakdown].reverse();
+  const merchSorted = labelBreakdownFromMonthly(
+    summary,
+    "merchant",
+    "merchant",
+    "monthly_merchant_breakdown",
+    summary.merchant_breakdown,
+  );
+  const merch = [...merchSorted].reverse();
   Plotly.react(
     "merchant-chart",
     [
@@ -1325,26 +1928,38 @@ function renderCharts(summary) {
     plotlyConfig,
   );
 
-  Plotly.react(
-    "daily-chart",
-    [
-      {
-        x: summary.daily_expenses.map((row) => row.label || row.date),
-        y: summary.daily_expenses.map((row) => row.value),
-        type: "scatter",
-        mode: "lines",
-        fill: "tozeroy",
-        fillcolor: PALETTE.primarySoft,
-        line: { color: PALETTE.primary, width: 2.8, shape: "spline" },
-        hovertemplate: "%{x}<br>%{y:$,.2f}<extra></extra>",
-      },
-    ],
-    baseLayout(),
-    plotlyConfig,
-  );
+  const dailyRows = dailyRowsForTiming(summary, "daily");
+  if (!dailyRows.length) {
+    emptyChart("daily-chart");
+  } else {
+    Plotly.react(
+      "daily-chart",
+      [
+        {
+          x: dailyRows.map((row) => row.label || row.date),
+          y: dailyRows.map((row) => row.value),
+          type: "scatter",
+          mode: "lines",
+          fill: "tozeroy",
+          fillcolor: PALETTE.primarySoft,
+          line: { color: PALETTE.primary, width: 2.8, shape: "spline" },
+          hovertemplate: "%{x}<br>%{y:$,.2f}<extra></extra>",
+        },
+      ],
+      baseLayout(),
+      plotlyConfig,
+    );
+  }
 
   const wdOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-  const wdMap = Object.fromEntries((summary.weekday_breakdown || []).map((r) => [r.label, Number(r.value || 0)]));
+  const wdAgg = labelBreakdownFromMonthly(
+    summary,
+    "weekday",
+    "weekday",
+    "monthly_weekday_breakdown",
+    summary.weekday_breakdown,
+  );
+  const wdMap = Object.fromEntries(wdAgg.map((r) => [r.label, Number(r.value || 0)]));
   const wdLabels = wdOrder.filter((d) => d in wdMap);
   const wdVals = wdLabels.map((d) => wdMap[d]);
   if (!wdLabels.length) {
@@ -1366,7 +1981,7 @@ function renderCharts(summary) {
     );
   }
 
-  const tm = buildTreemapHierarchy(summary.treemap_breakdown);
+  const tm = buildTreemapHierarchy(treemapRowsForTiming(summary, "treemap"));
   if (!tm) {
     emptyChart("chart-treemap");
   } else {
@@ -1390,7 +2005,7 @@ function renderCharts(summary) {
     );
   }
 
-  const sb = buildSunburstHierarchy(summary.sunburst_breakdown);
+  const sb = buildSunburstHierarchy(sunburstRowsForTiming(summary, "sunburst"));
   if (!sb) {
     emptyChart("chart-sunburst");
   } else {
@@ -1413,7 +2028,7 @@ function renderCharts(summary) {
     );
   }
 
-  const sk = summary.sankey;
+  const sk = sankeyForTiming(summary);
   if (!sk.links.length || !sk.nodes.length) {
     emptyChart("chart-sankey");
   } else {
@@ -1618,6 +2233,7 @@ function bindCategoryReview() {
 
 function renderTable(containerId, rows, headers, rowMapper, className = "") {
   const container = document.getElementById(containerId);
+  if (!container) return;
   if (!rows.length) {
     container.innerHTML = `<div class="empty-state">No rows to show.</div>`;
     return;
@@ -1628,7 +2244,138 @@ function renderTable(containerId, rows, headers, rowMapper, className = "") {
   container.innerHTML = `<div class="${className}"><table><thead><tr>${headerRow}</tr></thead><tbody>${bodyRows}</tbody></table></div>`;
 }
 
+function renderStatementCoverage(summary) {
+  const sc = summary.statement_coverage;
+  const lead = document.getElementById("statement-coverage-lead");
+  const cap = document.getElementById("statement-coverage-caption");
+  const unk = document.getElementById("statement-coverage-unrecognized");
+  const tbl = document.getElementById("statement-coverage-table");
+  if (!sc || !tbl) return;
+
+  const months = sc.months || [];
+  const nOk = months.filter((m) => m.ok).length;
+  const nTot = months.length;
+  if (lead) {
+    const dup = sc.duplicate_pdf_copies_ignored || 0;
+    const dupPart = dup ? ` ${dup} duplicate download name(s) collapsed to the same logical statement.` : "";
+    lead.textContent = nTot
+      ? `${sc.unique_pdf_count} unique PDF(s) across ${nTot} month bucket(s).${dupPart} ${
+          nOk === nTot ? "All months match expectations." : `${nTot - nOk} month bucket(s) need attention.`
+        }`
+      : "No PDF statements found under input_statements or uploads cache.";
+  }
+  if (cap) cap.textContent = sc.caption || "";
+
+  if (unk) {
+    const bad = sc.unrecognized_files || [];
+    if (bad.length) {
+      unk.hidden = false;
+      unk.innerHTML = `<strong>Unrecognized filenames</strong> (expected pattern: <code>Chequing|Visa|MasterCard|Credit Line Statement-NNNN YYYY-MM-DD.pdf</code>, optional <code>-1</code> / <code>-2-1</code> duplicate suffixes):<ul class="statement-coverage-ul">${bad
+        .map((f) => `<li>${escapeHtml(f)}</li>`)
+        .join("")}</ul>`;
+    } else {
+      unk.hidden = true;
+      unk.innerHTML = "";
+    }
+  }
+
+  if (!months.length) {
+    tbl.innerHTML = `<div class="empty-state">Drop statement PDFs into <code>input_statements</code>, then use <strong>Refresh data</strong>.</div>`;
+    return;
+  }
+
+  const fmt = (arr) => (arr && arr.length ? arr.map((x) => escapeHtml(String(x))).join(", ") : "—");
+  const bodyRows = months
+    .map((m) => {
+      const pill = m.ok
+        ? `<span class="coverage-pill coverage-pill--ok">OK</span>`
+        : `<span class="coverage-pill coverage-pill--warn">${(m.issues || []).length} issue(s)</span>`;
+      const issues = (m.issues || []).length ? (m.issues || []).map((x) => escapeHtml(String(x))).join("; ") : "—";
+      return `<tr>
+        <td><strong>${escapeHtml(m.month_key)}</strong></td>
+        <td>${pill}</td>
+        <td>${fmt(m.chequing_last4)}</td>
+        <td>${fmt(m.visa_last4)}</td>
+        <td>${fmt(m.mastercard_last4)}</td>
+        <td>${fmt(m.credit_line_last4)}</td>
+        <td class="coverage-issues">${issues}</td>
+      </tr>`;
+    })
+    .join("");
+
+  tbl.innerHTML = `<div class="data-table-wrap"><table><thead><tr>
+    <th>Month</th><th>Status</th><th>Chequing (last4)</th><th>Visa</th><th>MasterCard</th><th>Credit line</th><th>Notes</th>
+  </tr></thead><tbody>${bodyRows}</tbody></table></div>`;
+}
+
+function renderStatementTotalsCheck(summary) {
+  const st = summary.statement_totals_check;
+  const lead = document.getElementById("statement-totals-lead");
+  const cap = document.getElementById("statement-totals-caption");
+  const tbl = document.getElementById("statement-totals-table");
+  if (!st || !tbl) return;
+
+  const files = st.files || [];
+  const tol = st.tolerance ?? 0.02;
+  if (lead) {
+    const ok = st.ok_count ?? 0;
+    const tot = st.file_count ?? files.length;
+    lead.textContent =
+      tot === 0
+        ? "No PDFs to check."
+        : `${ok} of ${tot} files match first-page summary totals within ${formatCurrency(tol)}.`;
+  }
+  if (cap) cap.textContent = st.caption || "";
+
+  if (!files.length) {
+    tbl.innerHTML = `<div class="empty-state">No statement PDFs found.</div>`;
+    return;
+  }
+
+  const kindLabel = (k) => {
+    if (k === "bank_account") return "Chequing";
+    if (k === "credit_card") return "Card";
+    if (k === "credit_line") return "LOC";
+    return k || "—";
+  };
+
+  const fmtAmt = (n) => (n == null || Number.isNaN(n) ? "—" : formatCurrency(n));
+
+  const bodyRows = files
+    .map((r) => {
+      const pill = r.ok
+        ? `<span class="coverage-pill coverage-pill--ok">OK</span>`
+        : `<span class="coverage-pill coverage-pill--warn">Check</span>`;
+      return `<tr>
+        <td>${escapeHtml(r.filename)}</td>
+        <td>${escapeHtml(String(r.last4 || "—"))}</td>
+        <td>${escapeHtml(kindLabel(r.kind))}</td>
+        <td class="num">${fmtAmt(r.statement_in)}</td>
+        <td class="num">${fmtAmt(r.statement_out)}</td>
+        <td class="num">${fmtAmt(r.parsed_in)}</td>
+        <td class="num">${fmtAmt(r.parsed_out)}</td>
+        <td class="num">${fmtAmt(r.diff_in)}</td>
+        <td class="num">${fmtAmt(r.diff_out)}</td>
+        <td class="num">${r.row_count ?? 0}</td>
+        <td>${pill}</td>
+        <td class="coverage-issues">${escapeHtml(r.notes || "")}</td>
+      </tr>`;
+    })
+    .join("");
+
+  tbl.innerHTML = `<div class="data-table-wrap"><table><thead><tr>
+    <th>File</th><th>Last4</th><th>Type</th>
+    <th title="Chequing: total deposits. Card: purchases &amp; debits. LOC: sum of payments.">Stmt IN</th>
+    <th title="Chequing: total withdrawals. Card: payments &amp; credits. LOC: sum of withdrawals.">Stmt OUT</th>
+    <th title="Parsed: sum of positive row amounts (per product convention).">Parsed IN</th>
+    <th title="Parsed: sum of outflows (withdrawals / payment credits) per convention.">Parsed OUT</th>
+    <th>Δ IN</th><th>Δ OUT</th><th>Rows</th><th>OK</th><th>Notes</th>
+  </tr></thead><tbody>${bodyRows}</tbody></table></div>`;
+}
+
 function renderTables(summary) {
+  renderStatementCoverage(summary);
+  renderStatementTotalsCheck(summary);
   renderTable(
     "matched-transfers",
     summary.matched_transfers,
@@ -1658,6 +2405,70 @@ function renderTables(summary) {
       </tr>
     `,
   );
+
+  renderTable(
+    "cash-in-transactions",
+    summary.cash_in_transactions,
+    ["Date", "Owner", "Account", "Merchant", "Description", "Category", "Flow", "Cash in"],
+    (row) => `
+      <tr>
+        <td>${escapeHtml(row.transaction_date || "—")}</td>
+        <td>${escapeHtml(row.owner)}</td>
+        <td>${escapeHtml(row.account_label)}</td>
+        <td><strong>${escapeHtml(row.merchant || "—")}</strong></td>
+        <td>${escapeHtml(row.description || "—")}</td>
+        <td>${escapeHtml(row.category)}</td>
+        <td>${escapeHtml(row.flow_type)}</td>
+        <td><span class="pill pill--in">${formatCurrency(row.cash_flow_amount)}</span></td>
+      </tr>
+    `,
+    "data-table-wrap",
+  );
+
+  renderTable(
+    "cash-out-transactions",
+    summary.cash_out_transactions,
+    ["Date", "Owner", "Account", "Merchant", "Description", "Category", "Flow", "Cash out"],
+    (row) => `
+      <tr>
+        <td>${escapeHtml(row.transaction_date || "—")}</td>
+        <td>${escapeHtml(row.owner)}</td>
+        <td>${escapeHtml(row.account_label)}</td>
+        <td><strong>${escapeHtml(row.merchant || "—")}</strong></td>
+        <td>${escapeHtml(row.description || "—")}</td>
+        <td>${escapeHtml(row.category)}</td>
+        <td>${escapeHtml(row.flow_type)}</td>
+        <td><span class="pill pill--out">${formatCurrency(row.cash_flow_amount)}</span></td>
+      </tr>
+    `,
+    "data-table-wrap",
+  );
+
+  const o = summary.overview || {};
+  const capIn = document.getElementById("cash-in-ledger-caption");
+  if (capIn) {
+    const n = o.cash_in_ledger_count ?? 0;
+    const shown = o.cash_in_ledger_shown ?? 0;
+    const tot = formatCurrency(o.cash_in_ledger_total ?? 0);
+    capIn.textContent =
+      n === 0
+        ? "No rows match “true cash in” for this scope (Income only; shop/card refunds excluded)."
+        : n > shown
+          ? `${n} rows · showing ${shown} · total ${tot} — payroll-style income; refunds/Costco credits excluded; not between accounts`
+          : `${n} rows · total ${tot} — payroll-style income; refunds/Costco credits excluded; not between accounts`;
+  }
+  const capOut = document.getElementById("cash-out-ledger-caption");
+  if (capOut) {
+    const n = o.cash_out_ledger_count ?? 0;
+    const shown = o.cash_out_ledger_shown ?? 0;
+    const tot = formatCurrency(o.cash_out_ledger_total ?? 0);
+    capOut.textContent =
+      n === 0
+        ? "No rows match “hard cash out” for this scope (ATM/withdrawal-style or uncategorized non-purchase debits)."
+        : n > shown
+          ? `${n} rows · showing ${shown} · net ${tot} — ATM/branch cash & similar; not mortgages, bills, or card purchases`
+          : `${n} rows · net ${tot} — ATM/branch cash & similar; not mortgages, bills, or card purchases`;
+  }
 
   renderTable(
     "recent-transactions",
@@ -1930,6 +2741,7 @@ async function saveRules() {
   }
   state.summary = normalized;
   populateFilters(normalized);
+  refreshChartTimingControls(normalized);
   renderOverview(normalized);
   renderCharts(normalized);
   renderTables(normalized);
@@ -1959,6 +2771,7 @@ async function loadDashboard() {
     state.summary = normalized;
     populateFilters(normalized);
   }
+  refreshChartTimingControls(normalized);
   renderOverview(normalized);
   renderCharts(normalized);
   renderTables(normalized);
@@ -2579,6 +3392,8 @@ function bindChartGridChrome() {
 const DASH_STORAGE_KEY = "pf-dash-layout-v1";
 
 const DASH_PANEL_DEFS = [
+  { id: "panel-statement-coverage", label: "Statement file coverage (by month)" },
+  { id: "panel-statement-totals", label: "Statement totals vs extracted rows (per PDF)" },
   { id: "panel-overview", label: "Overview metrics" },
   { id: "panel-category-review", label: "Fix categories (review queue)" },
   { id: "chart-monthly", label: "Spending over time" },
@@ -2603,6 +3418,8 @@ const DASH_PANEL_DEFS = [
   { id: "panel-rules", label: "Keyword rules" },
   { id: "table-matched", label: "Matched transfers" },
   { id: "table-unmatched", label: "Unmatched transfers" },
+  { id: "table-cash-in", label: "Cash in (true)" },
+  { id: "table-cash-out", label: "Cash out (hard)" },
   { id: "table-recent", label: "Recent activity" },
 ];
 
@@ -2610,6 +3427,8 @@ const DASH_PRESETS = {
   full: null,
   minimal: new Set(["panel-overview", "panel-category-review", "chart-monthly", "chart-category-donut", "chart-category", "table-recent"]),
   household: new Set([
+    "panel-statement-coverage",
+    "panel-statement-totals",
     "panel-overview",
     "panel-category-review",
     "chart-necessity",
@@ -2617,9 +3436,21 @@ const DASH_PRESETS = {
     "chart-necessity-monthly",
     "chart-beneficiary-monthly",
     "chart-owner-beneficiary",
+    "table-cash-in",
+    "table-cash-out",
     "table-recent",
   ]),
-  reconcile: new Set(["panel-overview", "panel-category-review", "table-matched", "table-unmatched", "table-recent"]),
+  reconcile: new Set([
+    "panel-statement-coverage",
+    "panel-statement-totals",
+    "panel-overview",
+    "panel-category-review",
+    "table-matched",
+    "table-unmatched",
+    "table-cash-in",
+    "table-cash-out",
+    "table-recent",
+  ]),
   trends: new Set([
     "panel-overview",
     "panel-category-review",
@@ -2797,6 +3628,7 @@ function bindDashLayout() {
 
 window.addEventListener("DOMContentLoaded", async () => {
   bindDashLayout();
+  ensureAllChartTimingBars();
   restoreExtractionPresetFromStorage();
   bindExtractionPresetPersistence();
   bindUploader();

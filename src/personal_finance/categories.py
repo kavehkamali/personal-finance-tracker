@@ -21,6 +21,8 @@ CATEGORY_OPTIONS = [
     "Subscriptions",
     "Utilities & Bills",
     "Housing",
+    "Mortgage & Loans",
+    "Salary & EI",
     "Health & Pharmacy",
     "Travel",
     "Home",
@@ -104,7 +106,12 @@ DEFAULT_CATEGORY_RULES = [
     {"keyword": "hydro", "category": "Utilities & Bills", "necessity": "Fixed Bills", "beneficiary": "Shared"},
     {"keyword": "corporation of", "category": "Utilities & Bills", "necessity": "Fixed Bills", "beneficiary": "Shared"},
     {"keyword": "city of", "category": "Utilities & Bills", "necessity": "Fixed Bills", "beneficiary": "Shared"},
-    {"keyword": "mortgage", "category": "Housing", "necessity": "Fixed Bills", "beneficiary": "Shared"},
+    {"keyword": "online banking loan payment", "category": "Mortgage & Loans", "necessity": "Fixed Bills", "beneficiary": "Shared"},
+    {"keyword": "mortgage payment", "category": "Mortgage & Loans", "necessity": "Fixed Bills", "beneficiary": "Shared"},
+    {"keyword": "loan payment", "category": "Mortgage & Loans", "necessity": "Fixed Bills", "beneficiary": "Shared"},
+    {"keyword": "loan interest", "category": "Mortgage & Loans", "necessity": "Fixed Bills", "beneficiary": "Shared"},
+    {"keyword": "term loan", "category": "Mortgage & Loans", "necessity": "Fixed Bills", "beneficiary": "Shared"},
+    {"keyword": "mortgage", "category": "Mortgage & Loans", "necessity": "Fixed Bills", "beneficiary": "Shared"},
     {"keyword": "rent", "category": "Housing", "necessity": "Fixed Bills", "beneficiary": "Shared"},
     {"keyword": "property tax", "category": "Housing", "necessity": "Fixed Bills", "beneficiary": "Shared"},
     {"keyword": "home depot", "category": "Home", "necessity": "Essential", "beneficiary": "Shared"},
@@ -200,6 +207,10 @@ INCOME_KEYWORDS = (
     "direct deposit",
     "pay dep",
     "pay deposit",
+    "pay cheque",
+    "paycheck",
+    "ei canada",
+    "employment insurance",
     "cashback",
     "cash back",
     "rebate",
@@ -307,6 +318,8 @@ def _infer_necessity_from_category(category: str) -> str:
         "Home": "Essential",
         "Utilities & Bills": "Fixed Bills",
         "Housing": "Fixed Bills",
+        "Mortgage & Loans": "Fixed Bills",
+        "Salary & EI": "Income",
         "Kids & Family": "Child & Family",
         "Business": "Business",
         "Dining & Coffee": "Discretionary",
@@ -317,16 +330,42 @@ def _infer_necessity_from_category(category: str) -> str:
         "Entertainment": "Discretionary",
         "Gifts & Charity": "Discretionary",
         "Education": "Essential",
+        "Income": "Income",
         "Other": "Discretionary",
     }
     return mapping.get(category, "Discretionary")
+
+
+def _is_salary_or_ei_income(text: str) -> bool:
+    """Paycheque-style deposits (including EI) vs other income (interest, rebates, etc.)."""
+    markers = (
+        "payroll",
+        "salary",
+        "direct deposit",
+        "pay dep",
+        "pay deposit",
+        "pay cheque",
+        "paycheck",
+        "ei canada",
+        "employment insurance",
+    )
+    return any(m in text for m in markers)
 
 
 def _infer_beneficiary(owner: str, category: str) -> str:
     owner_lower = normalize_text(owner).lower()
     if category == "Kids & Family":
         return "Soren"
-    if category in {"Groceries", "Utilities & Bills", "Housing", "Home", "Travel", "Health & Pharmacy"}:
+    if category in {
+        "Groceries",
+        "Utilities & Bills",
+        "Housing",
+        "Mortgage & Loans",
+        "Salary & EI",
+        "Home",
+        "Travel",
+        "Health & Pharmacy",
+    }:
         return "Shared"
     if "faniya" in owner_lower:
         return "Faniya"
@@ -344,6 +383,21 @@ def resolve_rule_targets(owner: str, category: str, necessity: str, beneficiary:
 
 def infer_flow_type(description: str, amount: float, statement_type: str) -> str:
     text = normalize_text(description).lower()
+
+    # Incoming e-transfers / deposits must be Income, not "transfer" keyword matches.
+    income_receipt_markers = (
+        "e-transfer received",
+        "receive e-transfer",
+        "receive an e-transfer",
+        "receive an interac",
+        "etransfer received",
+        "autodeposit",
+        "auto-deposit",
+        "automatic deposit",
+        "deposit from",
+    )
+    if any(marker in text for marker in income_receipt_markers):
+        return "Income"
 
     if any(keyword in text for keyword in TRANSFER_KEYWORDS):
         return "Internal Transfer"
@@ -380,6 +434,13 @@ def classify_transaction(
     if flow_type == "Refund":
         return {"category": "Refund", "necessity": "Refund", "beneficiary": _infer_beneficiary(owner, "Other"), "matched_keyword": ""}
     if flow_type == "Income":
+        if _is_salary_or_ei_income(text):
+            return {
+                "category": "Salary & EI",
+                "necessity": "Income",
+                "beneficiary": "Shared",
+                "matched_keyword": "",
+            }
         return {"category": "Income", "necessity": "Income", "beneficiary": "Shared", "matched_keyword": ""}
     if flow_type == "Fees":
         return {"category": "Fees", "necessity": "Fixed Bills", "beneficiary": _infer_beneficiary(owner, "Other"), "matched_keyword": ""}
