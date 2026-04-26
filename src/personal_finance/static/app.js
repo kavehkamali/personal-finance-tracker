@@ -61,7 +61,7 @@ async function fetchJson(url, options = {}) {
   return res.json();
 }
 
-function rowsToTable(rows, columns, { rowClick } = {}) {
+function rowsToTable(rows, columns, { rowClick, sortable, sortState } = {}) {
   if (!rows || rows.length === 0) return `<div class="empty">No rows to show.</div>`;
   const body = rows
     .map((row, idx) => {
@@ -76,7 +76,17 @@ function rowsToTable(rows, columns, { rowClick } = {}) {
       return `<tr${attrs}>${cells}</tr>`;
     })
     .join("");
-  const head = columns.map((col) => `<th class="${col.align === "right" ? "num" : ""}">${esc(col.label)}</th>`).join("");
+  const head = columns
+    .map((col, idx) => {
+      const sorted = sortState?.key === col.key;
+      const marker = sorted ? (sortState.direction === "asc" ? " ↑" : " ↓") : "";
+      const attrs = sortable ? ` tabindex="0" data-sort-index="${idx}"` : "";
+      const classes = [col.align === "right" ? "num" : "", sortable ? "sortable" : "", sorted ? "sorted" : ""]
+        .filter(Boolean)
+        .join(" ");
+      return `<th class="${classes}"${attrs}>${esc(col.label)}${marker}</th>`;
+    })
+    .join("");
   return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
@@ -98,6 +108,54 @@ function revealDetails() {
   const panel = $("selected-detail-panel");
   panel.classList.add("detail-active");
   panel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function sortValue(row, column) {
+  const raw = typeof column.value === "function" ? column.value(row) : row[column.key];
+  if (column.money || column.number) return asNumber(raw);
+  if (column.key && String(column.key).includes("date")) {
+    const t = Date.parse(raw);
+    if (Number.isFinite(t)) return t;
+  }
+  return String(raw ?? "").toLowerCase();
+}
+
+function compareValues(a, b) {
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function renderSortableTable(container, rows, columns, { onRowClick } = {}) {
+  let sortState = { key: null, direction: "asc" };
+
+  function draw(tableRows) {
+    container.innerHTML = rowsToTable(tableRows, columns, { rowClick: Boolean(onRowClick), sortable: true, sortState });
+    if (onRowClick) attachRowClicks(container, tableRows, onRowClick);
+    container.querySelectorAll("th[data-sort-index]").forEach((th) => {
+      th.addEventListener("click", () => {
+        const column = columns[Number(th.dataset.sortIndex)];
+        const sameColumn = sortState.key === column.key;
+        sortState = {
+          key: column.key,
+          direction: sameColumn && sortState.direction === "asc" ? "desc" : "asc",
+        };
+        const sorted = [...rows].sort((left, right) => {
+          const result = compareValues(sortValue(left, column), sortValue(right, column));
+          return sortState.direction === "asc" ? result : -result;
+        });
+        draw(sorted);
+      });
+      th.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") th.click();
+      });
+    });
+  }
+
+  draw(rows);
+}
+
+function renderSortableDetailTable(rows, columns) {
+  renderSortableTable($("detail-table"), rows, columns);
 }
 
 function pivotCategories(rows) {
@@ -244,8 +302,9 @@ function renderMonthCategoryTable(data) {
     { key: "total", label: "Total", money: true, align: "right" },
   ];
   const container = $("month-category-table");
-  container.innerHTML = rowsToTable(tableRows, columns, { rowClick: true });
-  attachRowClicks(container, tableRows, (row) => showCategoryDetails(row.category));
+  renderSortableTable(container, tableRows, columns, {
+    onRowClick: (row) => showCategoryDetails(row.category),
+  });
 }
 
 function renderAuditTable(data, mode = "failed-reconciliation") {
@@ -305,7 +364,7 @@ function showAuditDetails(row) {
   const entries = Object.entries(row || {}).map(([field, value]) => ({ field, value }));
   $("detail-title").textContent = "Audit row";
   $("detail-subtitle").textContent = row?.filename || row?.account_key || "Selected audit detail";
-  $("detail-table").innerHTML = rowsToTable(entries, [
+  renderSortableDetailTable(entries, [
     { key: "field", label: "Field" },
     { key: "value", label: "Value" },
   ]);
@@ -321,7 +380,7 @@ function showCategoryDetails(category, month = null) {
   const total = rows.reduce((sum, row) => sum + asNumber(row.amount), 0);
   $("detail-title").textContent = category;
   $("detail-subtitle").textContent = `${month || "All included months"} · ${rows.length} transactions · ${fmtMoney(total)}`;
-  $("detail-table").innerHTML = rowsToTable(rows, [
+  renderSortableDetailTable(rows, [
     { key: "statement_month", label: "Month" },
     { key: "transaction_date", label: "Date" },
     { key: "spend_source", label: "Source" },

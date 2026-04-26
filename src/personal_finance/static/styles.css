@@ -348,6 +348,22 @@ th {
   text-transform: uppercase;
 }
 
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+th.sortable:hover,
+th.sortable:focus {
+  color: var(--ink);
+  background: #eef6ff;
+  outline: none;
+}
+
+th.sorted {
+  color: var(--blue);
+}
+
 td {
   color: #243244;
   font-size: 0.82rem;
